@@ -14,12 +14,8 @@ for run_folder in sorted(run_folders):
     log_file = os.path.join(runs_base_dir, run_folder, 'loss_log.csv')
     
     if os.path.exists(log_file):
-        # Read the CSV file into a pandas DataFrame
         df = pd.read_csv(log_file)
-        
-        # Plot the loss vs. training step
-        # You can add a rolling average to smooth the curve
-        plt.plot(df['step'], df['loss'].rolling(window=50).mean(), label=run_folder)
+        plt.plot(df.iloc[:, 1], df.iloc[:, 2].rolling(window=50).mean(), label=run_folder)
 
 plt.title('Training Loss Comparison Across Runs')
 plt.xlabel('Training Step')

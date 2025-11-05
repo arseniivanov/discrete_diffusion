@@ -1,5 +1,7 @@
-from torch.distributions import distribution
-from dataset import get_data_loader, StringHandler, print_wrapped, decode
+from numpy._core.multiarray import USE_SETITEM
+from torch.distributions import Categorical
+from torch.serialization import UNSAFE_MESSAGE
+from dataset import get_data_loader, StringHandler, perturb_batch, print_wrapped, decode
 from model import GPT, GeometricNoise, GPTConfig
 import torch
 import torch.optim as optim
@@ -20,7 +22,15 @@ sh = StringHandler()
 train_dataloader, dataset = get_data_loader(data_dir, sh, 'train', batch_size, context_length)
 val_dataloader, _   = get_data_loader(data_dir, sh, 'val', batch_size, context_length)
 
+#move out to config
+USE_MUON = False
+PROB = False
+
+device = "cuda:0"
 distribution = dataset.distribution
+if PROB:
+    token_dist_gpu = distribution.to(device)
+    sampler = Categorical(token_dist_gpu)
 
 # Peek at one batch to confirm shapes/types
 vocab_size = sh.get_vocab_size()
@@ -92,14 +102,31 @@ if os.path.exists(PATH):
             print_wrapped(decode(x[0], sh), end='\n\n', flush=True)
 
 else:
+    #---Logging---
     run_timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     run_dir = f'runs/{run_timestamp}'
     os.makedirs(run_dir, exist_ok=True)
-    print(f"Starting new run. Saving checkpoints and logs to: {run_dir}")
     loss_log_path = os.path.join(run_dir, 'loss_log.csv')
     summary_log_path = os.path.join(run_dir, 'summary.txt')
+    #---Logging end---
 
-    optimizer = optim.AdamW(model.parameters(), lr=1e-4)
+    #---Optimizer split
+    matrix_params = []
+    other_params = []
+    for name, p in model.named_parameters():
+        if p.dim() == 2:
+            matrix_params.append(p)
+            print(f"Assigning '{name}' to Matrix Group (shape: {p.shape})")
+        else:
+            other_params.append(p)
+            print(f"Assigning '{name}' to Other Group (shape: {p.shape})")
+
+    if USE_MUON:
+        optimizer_matrices = optim.Muon(matrix_params, lr=1e-4) 
+        optimizer = optim.AdamW(other_params, lr=1e-4)
+    else:
+        optimizer = optim.AdamW(model.parameters(), lr=1e-4)
+
     model.train()
     n_epochs = 1
     start_time = time.time()
@@ -112,14 +139,21 @@ else:
         )
         for i, batch in enumerate(progress_bar):
             batch = batch.to(device)
-            loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min, token_distribution=distribution)
+            if PROB:
+                loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min, sampler=sampler)
+            else:
+                loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min, sampler=None)
             with open(loss_log_path, 'a') as f:
                 f.write(f'{epoch},{i},{loss.item()}\n')
+            if USE_MUON:
+                optimizer_matrices.zero_grad()
             optimizer.zero_grad()
             loss.backward()
+            if USE_MUON:
+                optimizer_matrices.step()
             optimizer.step()
         if save_model:
-            torch.save(model.state_dict(), f'model_epoch_{epoch+1}.pth')
+            torch.save(model.state_dict(), os.path.join(run_dir, f'model_epoch_{epoch+1}.pth'))
 
     end_time = time.time()
     total_duration_seconds = end_time - start_time
