@@ -25,10 +25,11 @@ val_dataloader, _   = get_data_loader(data_dir, sh, 'val', batch_size, context_l
 #move out to config
 USE_MUON = False
 PROB = False
+LOG_RUN = False
 
 device = "cuda:0"
-distribution = dataset.distribution
 if PROB:
+    distribution = dataset.distribution
     token_dist_gpu = distribution.to(device)
     sampler = Categorical(token_dist_gpu)
 
@@ -103,11 +104,12 @@ if os.path.exists(PATH):
 
 else:
     #---Logging---
-    run_timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    run_dir = f'runs/{run_timestamp}'
-    os.makedirs(run_dir, exist_ok=True)
-    loss_log_path = os.path.join(run_dir, 'loss_log.csv')
-    summary_log_path = os.path.join(run_dir, 'summary.txt')
+    if LOG_RUN:
+        run_timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        run_dir = f'runs/{run_timestamp}'
+        os.makedirs(run_dir, exist_ok=True)
+        loss_log_path = os.path.join(run_dir, 'loss_log.csv')
+        summary_log_path = os.path.join(run_dir, 'summary.txt')
     #---Logging end---
 
     #---Optimizer split
@@ -143,8 +145,9 @@ else:
                 loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min, sampler=sampler)
             else:
                 loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min, sampler=None)
-            with open(loss_log_path, 'a') as f:
-                f.write(f'{epoch},{i},{loss.item()}\n')
+            if LOG_RUN:
+                with open(loss_log_path, 'a') as f:
+                    f.write(f'{epoch},{i},{loss.item()}\n')
             if USE_MUON:
                 optimizer_matrices.zero_grad()
             optimizer.zero_grad()
@@ -162,8 +165,9 @@ else:
     seconds = int(total_duration_seconds % 60)
     duration_str = f"{minutes:02d}m {seconds:02d}s"
 
-    with open(summary_log_path, 'w') as f:
-        f.write(f"Total Epochs: {n_epochs}\n")
-        f.write(f"Final Loss: {loss.item():.4f}\n")
-        f.write(f"Total Runtime: {duration_str}\n")
-        f.write(f"Total Runtime (seconds): {total_duration_seconds:.2f}\n")
+    if LOG_RUN:
+        with open(summary_log_path, 'w') as f:
+            f.write(f"Total Epochs: {n_epochs}\n")
+            f.write(f"Final Loss: {loss.item():.4f}\n")
+            f.write(f"Total Runtime: {duration_str}\n")
+            f.write(f"Total Runtime (seconds): {total_duration_seconds:.2f}\n")
