@@ -6,6 +6,9 @@ import torch.optim as optim
 from losses import loss_function
 import os
 from inference_helpers import staggered_score, transition, sample_categorical
+import datetime
+from tqdm import tqdm
+import time
 
 # Initialise
 batch_size = 256
@@ -45,6 +48,7 @@ model = GPT(config)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model.to(device)
 PATH = "model_epoch_1.pth"
+save_model = False
 
 if os.path.exists(PATH):
     model.load_state_dict(torch.load(PATH, weights_only=True))
@@ -88,18 +92,44 @@ if os.path.exists(PATH):
             print_wrapped(decode(x[0], sh), end='\n\n', flush=True)
 
 else:
+    run_timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    run_dir = f'runs/{run_timestamp}'
+    os.makedirs(run_dir, exist_ok=True)
+    print(f"Starting new run. Saving checkpoints and logs to: {run_dir}")
+    loss_log_path = os.path.join(run_dir, 'loss_log.csv')
+    summary_log_path = os.path.join(run_dir, 'summary.txt')
+
     optimizer = optim.AdamW(model.parameters(), lr=1e-4)
     model.train()
     n_epochs = 1
+    start_time = time.time()
 
     for epoch in range(n_epochs):
-        for i, batch in enumerate(train_dataloader):
+        progress_bar = tqdm(
+            train_dataloader, 
+            desc=f"Epoch {epoch+1}/{n_epochs}", 
+            leave=True
+        )
+        for i, batch in enumerate(progress_bar):
             batch = batch.to(device)
             loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min, token_distribution=distribution)
-            print(loss.item())
+            with open(loss_log_path, 'a') as f:
+                f.write(f'{epoch},{i},{loss.item()}\n')
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        #print(f"Epoch {epoch} loss: {loss.item()}")
-        #if (epoch + 1) % 5 == 0:
-        torch.save(model.state_dict(), f'model_epoch_{epoch+1}.pth')
+        if save_model:
+            torch.save(model.state_dict(), f'model_epoch_{epoch+1}.pth')
+
+    end_time = time.time()
+    total_duration_seconds = end_time - start_time
+
+    minutes = int((total_duration_seconds % 3600) // 60)
+    seconds = int(total_duration_seconds % 60)
+    duration_str = f"{minutes:02d}m {seconds:02d}s"
+
+    with open(summary_log_path, 'w') as f:
+        f.write(f"Total Epochs: {n_epochs}\n")
+        f.write(f"Final Loss: {loss.item():.4f}\n")
+        f.write(f"Total Runtime: {duration_str}\n")
+        f.write(f"Total Runtime (seconds): {total_duration_seconds:.2f}\n")
