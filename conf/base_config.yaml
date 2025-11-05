@@ -31,7 +31,7 @@ noise:
 
 # Trainer settings
 trainer:
-  n_epochs: 1
+  n_epochs: 2
   lr: 1.0e-3
   # Use Muon optimizer for weight matrices
   use_muon: True
@@ -40,7 +40,6 @@ trainer:
 
 # Inference settings (used only if a model path is found)
 inference:
-  # Path to a pre-trained model to run inference instead of training
   model_path: "model_epoch_1.pth"
   run_inference: False
   steps: 128
@@ -50,3 +49,4 @@ inference:
 hydra:
   run:
     dir: outputs/${run_name}/${now:%Y-%m-%d_%H-%M-%S}
+

@@ -1,0 +1,11 @@
+defaults:
+  - base_config  # Inherit all the defaults from your main config
+  - override hydra/sweeper: basic # Specify we are using the basic sweeper
+
+hydra:
+  sweeper:
+    params:
+      noise.type: log_linear,geometric
+      trainer.lr: 1e-3, 1e-4
+      use_muon: True, False
+      prob_sampling: True, False
