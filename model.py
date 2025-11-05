@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from typing import Optional
 from dataclasses import dataclass
+import abc
 
 @dataclass
 class GPTConfig:
@@ -242,7 +243,28 @@ class GPT(nn.Module):
 
         return x
 
-class GeometricNoise:
+class Noise(abc.ABC, nn.Module):
+    """
+    Baseline forward method to get the total + rate of noise at a timestep
+    """
+    def forward(self, t):
+        return self.total_noise(t), self.rate_noise(t)
+
+    @abc.abstractmethod
+    def rate_noise(self, t):
+        """
+        Rate of change of noise ie g(t)
+        """
+        pass
+
+    @abc.abstractmethod
+    def total_noise(self, t):
+        """
+        Total noise ie \int_0^t g(t) dt + g(0)
+        """
+        pass
+
+class GeometricNoise(Noise):
     def __init__(self, sigma_min=1e-4, sigma_max=20):
         self.sigmas = 1.0 * torch.tensor([sigma_min, sigma_max])
 
@@ -253,8 +275,18 @@ class GeometricNoise:
         return self.sigmas[0] ** (1 - t) * self.sigmas[1] ** t
 
     def __call__(self, t):
-        """
-        Returns:
-            \bar \sigma(t) and \sigma(t)
-        """
+        return self.total_noise(t), self.rate_noise(t)
+
+class LogLinearNoise(Noise):
+    def __init__(self, eps=1e-3):
+        super().__init__()
+        self.eps = eps
+
+    def rate_noise(self, t):
+        return (1 - self.eps) / (1 - (1 - self.eps) * t)
+
+    def total_noise(self, t):
+        return -torch.log1p(-(1 - self.eps) * t)
+
+    def __call__(self, t):
         return self.total_noise(t), self.rate_noise(t)
