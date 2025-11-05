@@ -1,21 +1,20 @@
+import hydra
+from omegaconf import DictConfig, OmegaConf
+from hydra.core.hydra_config import HydraConfig
+import torch
 from torch.distributions import Categorical
 from dataset import get_data_loader, StringHandler, print_wrapped, decode
-from model import GPT, GeometricNoise, GPTConfig
-import torch
+from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise
 import torch.optim as optim
 from losses import loss_function
 import os
 from inference_helpers import staggered_score, transition, sample_categorical
-import datetime
 from tqdm import tqdm
 import time
 import random
 import numpy as np
 
 def set_seed(seed: int):
-    """
-    Sets the random seed for Python, NumPy, and PyTorch to ensure reproducibility.
-    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -24,165 +23,146 @@ def set_seed(seed: int):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-SEED = 42
-set_seed(SEED)
+@hydra.main(version_base=None, config_path="conf", config_name="base_config")
+def main(cfg: DictConfig) -> None:
+    """
+    Main function to run either training or inference based on the provided configuration.
+    """
+    set_seed(cfg.seed)
+    output_dir = HydraConfig.get().runtime.output_dir
+    # --- Hydra sets the CWD, print it for clarity ---
+    print(f"Starting run: {cfg.run_name}")
+    print(f"Output directory: {output_dir}")
+    
+    # --- Initialise ---
+    sh = StringHandler()
+    device = cfg.device
+    
+    # Use hydra.utils.to_absolute_path to resolve relative data directory
+    data_dir = hydra.utils.to_absolute_path(cfg.data.dir)
+    train_dataloader, dataset = get_data_loader(data_dir, sh, 'train', cfg.data.batch_size, cfg.data.context_length)
 
-# Initialise
-batch_size = 256
-context_length = 256
-data_dir = './shakespeare_char/'
+    # --- Model and Noise Setup ---
+    vocab_size = sh.get_vocab_size()
+    if cfg.noise.type == 'geometric':
+        noise = GeometricNoise(sigma_min=cfg.noise.sigma_min, sigma_max=cfg.noise.sigma_max)
+    else:
+        noise = LogLinearNoise()
 
-sh = StringHandler()
+    model_args = dict(n_layer=cfg.model.n_layer, n_head=cfg.model.n_head, n_embd=cfg.model.n_embd,
+                      cond_dim=cfg.model.cond_dim, bias=cfg.model.bias, vocab_size=vocab_size,
+                      block_size=cfg.data.context_length, dropout=cfg.model.dropout)
 
-train_dataloader, dataset = get_data_loader(data_dir, sh, 'train', batch_size, context_length)
-val_dataloader, _   = get_data_loader(data_dir, sh, 'val', batch_size, context_length)
+    config = GPTConfig(**model_args)
+    model = GPT(config).to(device)
+    
+    # --- Decide to Train or Run Inference ---
+    # Resolve relative model path
+    model_path = hydra.utils.to_absolute_path(cfg.inference.model_path)
+    if os.path.exists(model_path):
+        print(f"Found existing model at {model_path}. Running inference.")
+        run_inference(cfg, model, noise, sh, device, vocab_size)
+    else:
+        print("No existing model found. Starting training.")
+        run_training(cfg, model, noise, sh, device, train_dataloader, dataset, output_dir)
 
-#move out to config
-USE_MUON = True
-PROB = False
-LOG_RUN = True
+def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, dataset, output_dir):
+    """Contains the main training loop logic."""
+    # --- Logging ---
+    run_dir = output_dir
+    loss_log_path = os.path.join(run_dir, 'loss_log.csv')
+    summary_log_path = os.path.join(run_dir, 'summary.txt')
 
-device = "cuda:0"
-if PROB:
-    distribution = dataset.distribution
-    token_dist_gpu = distribution.to(device)
-    sampler = Categorical(token_dist_gpu)
+    # --- Optimizer ---
+    if cfg.trainer.use_muon:
+        matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2]
+        other_params = [p for n, p in model.named_parameters() if p.dim() != 2]
+        optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr)
+        optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr)
+    else:
+        optimizer = optim.AdamW(model.parameters(), lr=cfg.trainer.lr)
 
-# Peek at one batch to confirm shapes/types
-vocab_size = sh.get_vocab_size()
-batch = next(iter(train_dataloader))
-print(batch.shape)
-print(batch[0]) # A tensor of indices of length `context_length`
-# A character-level baby GPT model :)
-n_layer = 2
-n_head = 1
-n_embd = 384
-cond_dim = 64
-block_size = context_length
-dropout = 0.1
-bias = False # do we use bias inside LayerNorm and Linear layers?
+    sampler = None
+    if cfg.trainer.prob_sampling:
+        distribution = dataset.distribution.to(device)
+        sampler = Categorical(distribution)
 
-sigma_min, sigma_max = 1e-4, 20
-noise = GeometricNoise(sigma_min=sigma_min, sigma_max=sigma_max)
+    model.train()
+    start_time = time.time()
+    final_loss = 0
 
-model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, cond_dim=cond_dim,
-                  bias=bias, vocab_size=vocab_size, block_size=block_size, dropout=dropout)
+    for epoch in range(cfg.trainer.n_epochs):
+        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{cfg.trainer.n_epochs}")
+        for i, batch in enumerate(progress_bar):
+            batch = batch.to(device)
+            loss = loss_function(model, batch, noise, sh, sampling_eps=cfg.noise.sigma_min, sampler=sampler)
+            final_loss = loss.item()
 
-config = GPTConfig(**model_args)
-model = GPT(config)
+            if cfg.log_run:
+                print("logged loss at:", loss_log_path)
+                with open(loss_log_path, 'a') as f:
+                    f.write(f'{epoch},{i},{final_loss}\n')
+            
+            optimizer.zero_grad(set_to_none=True)
+            if cfg.trainer.use_muon:
+                optimizer_matrices.zero_grad(set_to_none=True)
+            
+            loss.backward()
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model.to(device)
-PATH = "model_epoch_1.pth"
-save_model = False
+            optimizer.step()
+            if cfg.trainer.use_muon:
+                optimizer_matrices.step()
 
-if os.path.exists(PATH):
-    model.load_state_dict(torch.load(PATH, weights_only=True))
+        if cfg.save_model:
+            torch.save(model.state_dict(), os.path.join(run_dir, f'model_epoch_{epoch+1}.pth'))
+
+    # --- Final Logging ---
+    end_time = time.time()
+    duration_sec = end_time - start_time
+    duration_str = f"{(duration_sec % 3600) // 60:02.0f}m {duration_sec % 60:02.0f}s"
+    if cfg.log_run:
+        with open(summary_log_path, 'w') as f:
+            f.write(f"--- Configuration ---\n{OmegaConf.to_yaml(cfg)}\n")
+            f.write(f"\n--- Training Summary ---\n")
+            f.write(f"Total Epochs: {cfg.trainer.n_epochs}\n")
+            f.write(f"Final Loss: {final_loss:.4f}\n")
+            f.write(f"Total Runtime: {duration_str}\n")
+            f.write(f"Total Runtime (seconds): {duration_sec:.2f}\n")
+    print(f"Training finished. Final loss: {final_loss:.4f}. Duration: {duration_str}")
+
+
+def run_inference(cfg: DictConfig, model, noise, sh, device, vocab_size):
+    """Contains the inference (sampling) logic."""
+    model.load_state_dict(torch.load(hydra.utils.to_absolute_path(cfg.inference.model_path), weights_only=True))
     model.eval()
-    steps = 128
-    eps = 1e-5
+
+    steps = cfg.inference.steps
+    eps = cfg.inference.eps
     timesteps = torch.linspace(1, eps, steps + 1, device=device)
     step_size = (1 - eps) / steps
-
-    x = torch.randint(0, vocab_size, (1, context_length), device=device)
+    x = torch.randint(0, vocab_size, (1, cfg.data.context_length), device=device)
 
     with torch.no_grad():
-        for i in range(steps + 1):
+        for i in tqdm(range(steps + 1), desc="Inference Step"):
             t = timesteps[i] * torch.ones(x.shape[0], 1, device=device)
             curr_sigma_bar = noise(t)[0]
+            
             if i < steps:
                 next_sigma_bar = noise(t - step_size)[0]
                 delta_sigma = curr_sigma_bar - next_sigma_bar
-
-                log_score = model(x, curr_sigma_bar)
-                score = torch.exp(log_score)
-
-                stag_score = staggered_score(score, delta_sigma)
-                probs = stag_score * transition(x, delta_sigma, sh)
-                x = sample_categorical(probs)
-
-            else:
-                # last denoising step
-                # delta_sigma = curr_noise_bar - 0
+            else: # Last denoising step
                 delta_sigma = curr_sigma_bar
 
-                log_score = model(x, curr_sigma_bar)
-                score = torch.exp(log_score)
+            log_score = model(x, curr_sigma_bar)
+            score = torch.exp(log_score)
 
-                stag_score = staggered_score(score, delta_sigma)
-                probs = stag_score * transition(x, delta_sigma, sh)
+            stag_score = staggered_score(score, delta_sigma)
+            probs = stag_score * transition(x, delta_sigma, sh)
+            x = sample_categorical(probs)
 
-                x = sample_categorical(probs)
+        print(f'\n--- Final Decoded Text ---')
+        print_wrapped(decode(x[0], sh), end='\n\n', flush=True)
 
-            print(f'Decoded Text at step {i}:', flush=True, end='\n\n')
-            print_wrapped(decode(x[0], sh), end='\n\n', flush=True)
 
-else:
-    #---Logging---
-    if LOG_RUN:
-        run_timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        run_dir = f'runs/{run_timestamp}'
-        os.makedirs(run_dir, exist_ok=True)
-        loss_log_path = os.path.join(run_dir, 'loss_log.csv')
-        summary_log_path = os.path.join(run_dir, 'summary.txt')
-    #---Logging end---
-
-    #---Optimizer split
-    matrix_params = []
-    other_params = []
-    for name, p in model.named_parameters():
-        if p.dim() == 2:
-            matrix_params.append(p)
-            print(f"Assigning '{name}' to Matrix Group (shape: {p.shape})")
-        else:
-            other_params.append(p)
-            print(f"Assigning '{name}' to Other Group (shape: {p.shape})")
-
-    if USE_MUON:
-        optimizer_matrices = optim.Muon(matrix_params, lr=1e-4) 
-        optimizer = optim.AdamW(other_params, lr=1e-4)
-    else:
-        optimizer = optim.AdamW(model.parameters(), lr=1e-4)
-
-    model.train()
-    n_epochs = 1
-    start_time = time.time()
-
-    for epoch in range(n_epochs):
-        progress_bar = tqdm(
-            train_dataloader, 
-            desc=f"Epoch {epoch+1}/{n_epochs}", 
-            leave=True
-        )
-        for i, batch in enumerate(progress_bar):
-            batch = batch.to(device)
-            if PROB:
-                loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min, sampler=sampler)
-            else:
-                loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min, sampler=None)
-            if LOG_RUN:
-                with open(loss_log_path, 'a') as f:
-                    f.write(f'{epoch},{i},{loss.item()}\n')
-            if USE_MUON:
-                optimizer_matrices.zero_grad()
-            optimizer.zero_grad()
-            loss.backward()
-            if USE_MUON:
-                optimizer_matrices.step()
-            optimizer.step()
-        if save_model:
-            torch.save(model.state_dict(), os.path.join(run_dir, f'model_epoch_{epoch+1}.pth'))
-
-    end_time = time.time()
-    total_duration_seconds = end_time - start_time
-
-    minutes = int((total_duration_seconds % 3600) // 60)
-    seconds = int(total_duration_seconds % 60)
-    duration_str = f"{minutes:02d}m {seconds:02d}s"
-
-    if LOG_RUN:
-        with open(summary_log_path, 'w') as f:
-            f.write(f"Total Epochs: {n_epochs}\n")
-            f.write(f"Final Loss: {loss.item():.4f}\n")
-            f.write(f"Total Runtime: {duration_str}\n")
-            f.write(f"Total Runtime (seconds): {total_duration_seconds:.2f}\n")
+if __name__ == "__main__":
+    main()

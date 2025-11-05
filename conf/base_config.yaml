@@ -1,0 +1,51 @@
+# A descriptive name for this experiment run
+run_name: "shakespeare_diffusion_base"
+
+# General settings
+seed: 42
+device: "cuda:0"
+log_run: True
+save_model: True
+
+# Data loading settings
+data:
+  dir: './shakespeare_char/'
+  batch_size: 256
+  context_length: 256
+
+# Model architecture
+model:
+  n_layer: 2
+  n_head: 1
+  n_embd: 384
+  cond_dim: 64
+  dropout: 0.1
+  bias: False
+
+# Diffusion noise settings
+noise:
+  # Type can be 'log_linear' or 'geometric'
+  type: "log_linear"
+  sigma_min: 1.0e-4
+  sigma_max: 20.0
+
+# Trainer settings
+trainer:
+  n_epochs: 1
+  lr: 1.0e-3
+  # Use Muon optimizer for weight matrices
+  use_muon: True
+  # Use data distribution for sampling
+  prob_sampling: False
+
+# Inference settings (used only if a model path is found)
+inference:
+  # Path to a pre-trained model to run inference instead of training
+  model_path: "model_epoch_1.pth"
+  steps: 128
+  eps: 1.0e-5
+
+# Hydra's setting for creating a unique output directory for each run
+hydra:
+  run:
+    dir: outputs/${run_name}/${now:%Y-%m-%d_%H-%M-%S}
