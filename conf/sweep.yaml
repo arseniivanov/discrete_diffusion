@@ -7,5 +7,5 @@ hydra:
     params:
       noise.type: log_linear,geometric
       trainer.lr: 1e-3, 1e-4
-      use_muon: True, False
-      prob_sampling: True, False
+      trainer.use_muon: True, False
+      trainer.prob_sampling: True, False
