@@ -2,7 +2,6 @@ import os
 import numpy as np
 import torch
 import torch.utils.data as data
-from torch.distributions import Categorical
 import pickle
 import textwrap
 
@@ -87,7 +86,7 @@ class ShakespeareDataset(data.Dataset):
 
 def get_data_loader(data_dir, sh, split, batch_size, context_len=256):
     dataset = ShakespeareDataset(data_dir, sh, split, context_len)
-    return data.DataLoader(dataset, batch_size=batch_size, shuffle=True), dataset
+    return data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0), dataset
 
 def perturb_batch_with_distribution(
     batch: torch.Tensor,
