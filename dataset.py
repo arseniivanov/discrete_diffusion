@@ -46,7 +46,7 @@ class ShakespeareDataset(data.Dataset):
     def __init__(
         self,
         data_dir: str,
-        sh: StringHandler,
+        vocab_size: int,
         split: str = "train",
         context_len: int = 256,
         dtype: np.dtype = np.uint16,
@@ -66,7 +66,7 @@ class ShakespeareDataset(data.Dataset):
         # Memory-map the encoded corpus. uint16 matches the preprocessing.
         self.data = np.memmap(bin_path, dtype=dtype, mode="r")
 
-        counts = np.bincount(self.data, minlength=sh.get_vocab_size())
+        counts = np.bincount(self.data, minlength=vocab_size)
         counts_tensor = torch.from_numpy(counts).float()
         self.distribution = counts_tensor / counts_tensor.sum()
 
@@ -85,7 +85,7 @@ class ShakespeareDataset(data.Dataset):
         return x
 
 def get_data_loader(data_dir, sh, split, batch_size, context_len=256):
-    dataset = ShakespeareDataset(data_dir, sh, split, context_len)
+    dataset = ShakespeareDataset(data_dir, sh.get_vocab_size(), split, context_len)
     return data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0), dataset
 
 def perturb_batch_with_distribution(

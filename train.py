@@ -1,7 +1,5 @@
-from numpy._core.multiarray import USE_SETITEM
 from torch.distributions import Categorical
-from torch.serialization import UNSAFE_MESSAGE
-from dataset import get_data_loader, StringHandler, perturb_batch, print_wrapped, decode
+from dataset import get_data_loader, StringHandler, print_wrapped, decode
 from model import GPT, GeometricNoise, GPTConfig
 import torch
 import torch.optim as optim
@@ -11,6 +9,23 @@ from inference_helpers import staggered_score, transition, sample_categorical
 import datetime
 from tqdm import tqdm
 import time
+import random
+import numpy as np
+
+def set_seed(seed: int):
+    """
+    Sets the random seed for Python, NumPy, and PyTorch to ensure reproducibility.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+SEED = 42
+set_seed(SEED)
 
 # Initialise
 batch_size = 256
@@ -23,9 +38,9 @@ train_dataloader, dataset = get_data_loader(data_dir, sh, 'train', batch_size, c
 val_dataloader, _   = get_data_loader(data_dir, sh, 'val', batch_size, context_length)
 
 #move out to config
-USE_MUON = False
+USE_MUON = True
 PROB = False
-LOG_RUN = False
+LOG_RUN = True
 
 device = "cuda:0"
 if PROB:
@@ -39,8 +54,8 @@ batch = next(iter(train_dataloader))
 print(batch.shape)
 print(batch[0]) # A tensor of indices of length `context_length`
 # A character-level baby GPT model :)
-n_layer = 3
-n_head = 2
+n_layer = 2
+n_head = 1
 n_embd = 384
 cond_dim = 64
 block_size = context_length
