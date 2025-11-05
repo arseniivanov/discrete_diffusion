@@ -1,3 +1,4 @@
+from torch.distributions import distribution
 from dataset import get_data_loader, StringHandler, print_wrapped, decode
 from model import GPT, GeometricNoise, GPTConfig
 import torch
@@ -13,8 +14,10 @@ data_dir = './shakespeare_char/'
 
 sh = StringHandler()
 
-train_dataloader = get_data_loader(data_dir, 'train', batch_size, context_length)
-val_dataloader   = get_data_loader(data_dir, 'val', batch_size, context_length)
+train_dataloader, dataset = get_data_loader(data_dir, sh, 'train', batch_size, context_length)
+val_dataloader, _   = get_data_loader(data_dir, sh, 'val', batch_size, context_length)
+
+distribution = dataset.distribution
 
 # Peek at one batch to confirm shapes/types
 vocab_size = sh.get_vocab_size()
@@ -22,8 +25,8 @@ batch = next(iter(train_dataloader))
 print(batch.shape)
 print(batch[0]) # A tensor of indices of length `context_length`
 # A character-level baby GPT model :)
-n_layer = 2
-n_head = 1
+n_layer = 3
+n_head = 2
 n_embd = 384
 cond_dim = 64
 block_size = context_length
@@ -92,7 +95,7 @@ else:
     for epoch in range(n_epochs):
         for i, batch in enumerate(train_dataloader):
             batch = batch.to(device)
-            loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min)
+            loss = loss_function(model, batch, noise, sh, sampling_eps=sigma_min, token_distribution=distribution)
             print(loss.item())
             optimizer.zero_grad()
             loss.backward()
