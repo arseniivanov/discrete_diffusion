@@ -93,7 +93,7 @@ def perturb_batch_with_distribution(
     batch: torch.Tensor,
     sigma_bar: torch.Tensor,
     sh: StringHandler,
-    token_distribution: torch.Tensor,
+    sampler: torch.distributions.Categorical
 ) -> torch.Tensor:
     """
     Diffuses each token by sampling from the training data distribution.
@@ -113,7 +113,6 @@ def perturb_batch_with_distribution(
     move_prob = (1 - stay_base) * (1 - 1 / vocab_size)
 
     move_mask = torch.rand(B, L, device=batch.device) < move_prob
-    sampler = Categorical(token_distribution.to(batch.device))
     new_ids = sampler.sample(sample_shape=(B, L))
     batch_pert = torch.where(move_mask, new_ids, batch)
     return batch_pert

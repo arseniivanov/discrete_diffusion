@@ -110,9 +110,8 @@ def loss_function(
         x0: torch.Tensor,
         noise: GeometricNoise,
         sh: StringHandler,
-        token_distribution: torch.Tensor,
+        sampler: Optional[torch.distributions.Categorical],
         t: Optional[torch.Tensor]=None,
-        x_t: Optional[torch.Tensor]=None,
         sampling_eps=1e-3
     ) -> torch.Tensor:
     """
@@ -133,11 +132,13 @@ def loss_function(
 
     sigma_bar, sigma = noise(t)
 
-    if x_t is None:
-        x_t = perturb_batch_with_distribution(x0, sigma_bar[:, None], sh, token_distribution)
+    if sampler is not None:
+        fn = perturb_batch_with_distribution(x0, sigma_bar[:, None], sh, sampler)
+    else:
+        fn = perturb_batch(x0, sigma_bar[:, None], sh)
 
-    log_score = model(x_t, sigma_bar)
-    loss = score_entropy(log_score, sigma_bar[:, None], x_t, x0)
+    log_score = model(fn, sigma_bar)
+    loss = score_entropy(log_score, sigma_bar[:, None], fn, x0)
 
     loss = (sigma[:, None] * loss).mean(dim=-1).mean()
 
