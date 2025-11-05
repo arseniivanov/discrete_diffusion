@@ -174,6 +174,23 @@ class TimestepEmbedder(nn.Module):
         return t_emb
 
 
+class MLPEmbedder(nn.Module):
+    """
+    Embeds scalar timesteps into vector representations.
+    """
+    def __init__(self, hidden_size, frequency_embedding_size=256, silu=True):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(1, hidden_size, bias=True),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size, bias=True),
+        )
+        self.frequency_embedding_size = frequency_embedding_size
+
+    def forward(self, t):
+        t_emb = self.mlp(t.unsqueeze(-1))
+        return t_emb
+
 class GPT(nn.Module):
 
     def __init__(self, config):
