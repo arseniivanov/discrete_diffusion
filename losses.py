@@ -1,6 +1,6 @@
 import torch
 from model import GPT, GeometricNoise
-from dataset import StringHandler, perturb_batch
+from dataset import StringHandler, perturb_batch, perturb_batch_with_distribution
 from typing import Optional
 
 def score_entropy(
@@ -110,6 +110,7 @@ def loss_function(
         x0: torch.Tensor,
         noise: GeometricNoise,
         sh: StringHandler,
+        token_distribution: torch.Tensor,
         t: Optional[torch.Tensor]=None,
         x_t: Optional[torch.Tensor]=None,
         sampling_eps=1e-3
@@ -133,7 +134,7 @@ def loss_function(
     sigma_bar, sigma = noise(t)
 
     if x_t is None:
-        x_t = perturb_batch(x0, sigma_bar[:, None], sh)
+        x_t = perturb_batch_with_distribution(x0, sigma_bar[:, None], sh, token_distribution)
 
     log_score = model(x_t, sigma_bar)
     loss = score_entropy(log_score, sigma_bar[:, None], x_t, x0)
