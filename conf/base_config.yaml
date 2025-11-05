@@ -42,6 +42,7 @@ trainer:
 inference:
   # Path to a pre-trained model to run inference instead of training
   model_path: "model_epoch_1.pth"
+  run_inference: False
   steps: 128
   eps: 1.0e-5
 

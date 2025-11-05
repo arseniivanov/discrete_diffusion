@@ -41,6 +41,7 @@ def main(cfg: DictConfig) -> None:
     # Use hydra.utils.to_absolute_path to resolve relative data directory
     data_dir = hydra.utils.to_absolute_path(cfg.data.dir)
     train_dataloader, dataset = get_data_loader(data_dir, sh, 'train', cfg.data.batch_size, cfg.data.context_length)
+    val_dataset, _ = get_data_loader(data_dir, sh, 'val', cfg.data.batch_size, cfg.data.context_length)
 
     # --- Model and Noise Setup ---
     vocab_size = sh.get_vocab_size()
@@ -59,18 +60,19 @@ def main(cfg: DictConfig) -> None:
     # --- Decide to Train or Run Inference ---
     # Resolve relative model path
     model_path = hydra.utils.to_absolute_path(cfg.inference.model_path)
-    if os.path.exists(model_path):
+    if os.path.exists(model_path) and cfg.inference.run_inference is True:
         print(f"Found existing model at {model_path}. Running inference.")
         run_inference(cfg, model, noise, sh, device, vocab_size)
     else:
         print("No existing model found. Starting training.")
-        run_training(cfg, model, noise, sh, device, train_dataloader, dataset, output_dir)
+        run_training(cfg, model, noise, sh, device, train_dataloader, dataset, output_dir, val_dataset)
 
-def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, dataset, output_dir):
+def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, dataset, output_dir, val_dataloader):
     """Contains the main training loop logic."""
     # --- Logging ---
     run_dir = output_dir
     loss_log_path = os.path.join(run_dir, 'loss_log.csv')
+    val_loss_log_path = os.path.join(run_dir, 'val_loss_log.csv')
     summary_log_path = os.path.join(run_dir, 'summary.txt')
 
     # --- Optimizer ---
@@ -99,7 +101,6 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             final_loss = loss.item()
 
             if cfg.log_run:
-                print("logged loss at:", loss_log_path)
                 with open(loss_log_path, 'a') as f:
                     f.write(f'{epoch},{i},{final_loss}\n')
             
@@ -107,11 +108,28 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             if cfg.trainer.use_muon:
                 optimizer_matrices.zero_grad(set_to_none=True)
             
-            loss.backward()
 
+            loss.backward()
             optimizer.step()
             if cfg.trainer.use_muon:
                 optimizer_matrices.step()
+
+            if i % 1000 == 0 and i > 0 and cfg.log_run:
+                model.eval()  # Set the model to evaluation mode
+                total_val_loss = 0
+                with torch.no_grad(): # Ensure no gradients are calculated
+                    for batch in val_dataloader:
+                        batch = batch.to(device)
+                        # The same loss function you use for training
+                        loss = loss_function(model, batch, noise, sh, sampler=None) 
+                        total_val_loss += loss.item()
+
+                avg_val_loss = total_val_loss / len(val_dataloader)
+
+                with open(val_loss_log_path, 'a') as f:
+                    f.write(f'{epoch},{i},{avg_val_loss}\n')
+
+                model.train() # Set the model back to training mode
 
         if cfg.save_model:
             torch.save(model.state_dict(), os.path.join(run_dir, f'model_epoch_{epoch+1}.pth'))
@@ -128,6 +146,42 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             f.write(f"Final Loss: {final_loss:.4f}\n")
             f.write(f"Total Runtime: {duration_str}\n")
             f.write(f"Total Runtime (seconds): {duration_sec:.2f}\n")
+
+            f.write("\n\n--- Final Qualitative Sample ---\n")
+            model.eval() # Set model to evaluation mode for inference
+            
+            vocab_size = sh.get_vocab_size()
+            steps = cfg.inference.steps
+            eps = cfg.inference.eps
+            timesteps = torch.linspace(1, eps, steps + 1, device=device)
+            step_size = (1 - eps) / steps
+            x = torch.randint(0, vocab_size, (1, cfg.data.context_length), device=device)
+
+            with torch.no_grad():
+                for i in tqdm(range(steps + 1), desc="Generating final sample"):
+                    t = timesteps[i] * torch.ones(x.shape[0], 1, device=device)
+                    curr_sigma_bar = noise(t)[0]
+                    
+                    if i < steps:
+                        next_sigma_bar = noise(t - step_size)[0]
+                        delta_sigma = curr_sigma_bar - next_sigma_bar
+                    else: # Last denoising step
+                        delta_sigma = curr_sigma_bar
+
+                    log_score = model(x, curr_sigma_bar)
+                    score = torch.exp(log_score)
+
+                    stag_score = staggered_score(score, delta_sigma)
+                    probs = stag_score * transition(x, delta_sigma, sh)
+                    x = sample_categorical(probs)
+            
+            final_text = decode(x[0], sh)
+            
+            f.write(final_text)
+            
+            print("\n--- Final Generated Text ---")
+            print_wrapped(final_text, end='\n\n')
+
     print(f"Training finished. Final loss: {final_loss:.4f}. Duration: {duration_str}")
 
 
