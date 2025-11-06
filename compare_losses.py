@@ -1,58 +1,158 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+import argparse
+import yaml  # You might need to install PyYAML: pip install pyyaml
 
-# The base directory where Hydra stores all outputs.
-outputs_base_dir = Path('outputs/')
+# --- Argument Parsing ---
+parser = argparse.ArgumentParser(description="Plot training and validation losses from Hydra runs.")
+parser.add_argument(
+    '--date', type=str, default=None,
+    help='Optional: Filter by date folder, e.g., "2025-11-05"'
+)
+parser.add_argument(
+    '--runs', type=str, default=None,
+    help='Optional: Comma-separated list of run indices, e.g., "5,7,8,13"'
+)
+args = parser.parse_args()
 
-# --- Column definitions for your CSV file ---
-# This makes the code easier to read and less prone to errors.
-# Your log format is: epoch, step, loss
-STEP_COLUMN = 1
-LOSS_COLUMN = 2
 
-# Create a plot
-plt.figure(figsize=(15, 8))
+# --- Configuration ---
+outputs_base_dir = Path('./')
+COLUMN_NAMES = ['epoch', 'step', 'loss']
 
-# Use rglob to recursively find all 'loss_log.csv' files
-# This is the key change to handle the nested Hydra structure.
-all_log_files = sorted(list(outputs_base_dir.rglob('loss_log.csv')))
 
-if not all_log_files:
-    print(f"No 'loss_log.csv' files found in '{outputs_base_dir}'. Did you run any training?")
-else:
-    print(f"Found {len(all_log_files)} log files to plot.")
-
-for log_file in all_log_files:
+# --- Helper Function for Parsing ---
+def parse_summary_file(summary_path):
+    """Parses the summary.txt file to extract the config and qualitative sample."""
+    config_dict = None
+    sample_text = ""
     try:
-        # The parent of the log file is the specific run directory
-        # e.g., .../outputs/shakespeare_diffusion_base/2025-11-05_19-45-24
-        run_folder = log_file.parent
-
-        # Create a clean, descriptive label for the legend
-        # This will look like: "shakespeare_diffusion_base/2025-11-05_19-45-24"
-        label = f"{run_folder.parent.name}/{run_folder.name}"
-
-        # Read the CSV file. Since it has no header, we use header=None.
-        df = pd.read_csv(log_file, header=None)
+        with open(summary_path, 'r') as f:
+            content = f.read()
         
-        # Check if the dataframe is empty or has too few rows for a rolling window
-        if not df.empty and len(df) > 1:
-            # Apply a rolling mean to smooth the loss curve for better readability
-            # Using .iloc because there are no column names
-            smoothed_loss = df.iloc[:, LOSS_COLUMN].rolling(window=50, min_periods=1).mean()
+        # Extract the YAML config block
+        config_start = content.find("--- Configuration ---")
+        config_end = content.find("--- Training Summary ---")
+        if config_start != -1 and config_end != -1:
+            yaml_content = content[config_start + len("--- Configuration ---"):config_end]
+            config_dict = yaml.safe_load(yaml_content)
             
-            # Plot the step number against the smoothed loss
-            plt.plot(df.iloc[:, STEP_COLUMN], smoothed_loss, label=label)
+        # Extract the Qualitative Sample block
+        sample_start = content.find("--- Final Qualitative Sample ---")
+        if sample_start != -1:
+            sample_text = content[sample_start + len("--- Final Qualitative Sample ---"):].strip()
             
     except Exception as e:
-        print(f"Could not process file {log_file}: {e}")
+        print(f"Warning: Could not parse {summary_path}. Error: {e}")
+    
+    return config_dict, sample_text
 
 
-plt.title('Training Loss Comparison Across Runs', fontsize=16)
-plt.xlabel('Training Step', fontsize=12)
-plt.ylabel('Loss (Smoothed with 50-step window)', fontsize=12)
-plt.legend()
-plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-plt.tight_layout()
-plt.show()
+def create_legend_from_config(config):
+    """Builds a descriptive legend string from the parsed config dictionary."""
+    if not config:
+        return "Unknown"
+    
+    parts = []
+    
+    # Safely get nested values using .get() to avoid errors if keys are missing
+    noise_config = config.get('noise', {})
+    trainer_config = config.get('trainer', {})
+    
+    parts.append(noise_config.get('type', 'N/A'))
+    parts.append(str(trainer_config.get('lr', 'N/A')))
+    
+    if trainer_config.get('use_muon', False):
+        parts.append('muon')
+    
+    if trainer_config.get('prob_sampling', False):
+        parts.append('prob')
+        
+    return "-".join(parts)
+
+
+# --- Main Script ---
+plt.style.use('seaborn-v0_8-whitegrid')
+fig, ax = plt.subplots(figsize=(16, 9))
+qualitative_samples = []
+
+# --- File Discovery and Filtering ---
+all_log_files = sorted(list(outputs_base_dir.rglob('loss_log.csv')), key=lambda p: str(p))
+if args.date:
+    all_log_files = [f for f in all_log_files if args.date in str(f)]
+if args.runs:
+    try:
+        selected_indices = {int(i.strip()) for i in args.runs.split(',') if i.strip()}
+        all_log_files = [f for f in all_log_files if int(f.parent.name) in selected_indices]
+    except ValueError:
+        print(f"Error: Invalid --runs argument. Must be comma-separated integers.")
+        exit()
+
+if not all_log_files:
+    print("\nNo log files found after applying filters. Exiting.")
+else:
+    print(f"\nFound {len(all_log_files)} training runs to process.")
+
+# --- Plotting Loop ---
+for log_file in all_log_files:
+    try:
+        run_folder = log_file.parent
+        default_label = "/".join(run_folder.parts[-3:]) # Fallback label
+        
+        # --- Generate Label from Summary ---
+        summary_file = run_folder / 'summary.txt'
+        config, sample = parse_summary_file(summary_file)
+        
+        if config:
+            label = create_legend_from_config(config)
+        else:
+            label = default_label
+
+        # --- Process and Plot Data ---
+        df_train = pd.read_csv(log_file, header=None, names=COLUMN_NAMES)
+        if df_train.empty: continue
+
+        steps_per_epoch = df_train['step'].max() + 1
+        df_train['global_step'] = df_train['epoch'] * steps_per_epoch + df_train['step']
+        smoothed_loss = df_train['loss'].rolling(window=50, min_periods=1).mean()
+        
+        line = ax.plot(df_train['global_step'], smoothed_loss, label=label, alpha=0.9)
+        run_color = line[0].get_color()
+
+        val_log_file = run_folder / 'val_loss_log.csv'
+        if val_log_file.exists():
+            df_val = pd.read_csv(val_log_file, header=None, names=COLUMN_NAMES)
+            if not df_val.empty:
+                df_val['global_step'] = df_val['epoch'] * steps_per_epoch + df_val['step']
+                ax.plot(
+                    df_val['global_step'], df_val['loss'], color=run_color, 
+                    linestyle='--', marker='o', markersize=4, label=f"{label} (Val)", alpha=0.9
+                )
+
+        if sample:
+            qualitative_samples.append({"label": label, "sample": sample})
+
+    except Exception as e:
+        print(f"Could not process run in folder {run_folder.name}: {e}")
+
+# --- Finalize and Show Plot ---
+if all_log_files:
+    ax.set_title('Training & Validation Loss Comparison', fontsize=18, pad=20)
+    ax.set_xlabel('Global Training Step', fontsize=14)
+    ax.set_ylabel('Loss', fontsize=14)
+    legend_fontsize = 'medium' if len(all_log_files) < 10 else 'small'
+    ax.legend(loc='best', fontsize=legend_fontsize)
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+    plt.show()
+
+# --- Print Filtered Qualitative Samples ---
+if qualitative_samples:
+    print("\n" + "="*80)
+    print(" " * 25 + "FINAL QUALITATIVE SAMPLES")
+    print("="*80)
+    for item in sorted(qualitative_samples, key=lambda x: x['label']): # Sort for consistency
+        print(f"\n--- Run: {item['label']} ---\n")
+        print(item['sample'])
+        print("\n" + "-"*80)

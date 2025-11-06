@@ -307,3 +307,48 @@ class LogLinearNoise(Noise):
 
     def __call__(self, t):
         return self.total_noise(t), self.rate_noise(t)
+
+class MaskingNoise(Noise):
+    def __init__(self, schedule='cosine'):
+        """
+        Args:
+            schedule (str): The type of schedule to use for alpha_t. 
+                            Options: 'linear', 'cosine'.
+        """
+        super().__init__()
+        if schedule not in ['linear', 'cosine']:
+            raise ValueError("Schedule must be 'linear' or 'cosine'")
+        self.schedule = schedule
+
+    def alpha_t(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Calculates alpha_t, the probability of a token remaining original.
+        Decreases from ~1 at t=0 to ~0 at t=1.
+        """
+        if self.schedule == 'linear':
+            return 1.0 - t
+        elif self.schedule == 'cosine':
+            # Cosine schedule, often found to be effective
+            return torch.cos(t * math.pi / 2.0)
+
+    def total_noise(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        This is our sigma_bar. It represents the probability of a token being MASKED.
+        sigma_bar = 1 - alpha_t
+        """
+        return 1.0 - self.alpha_t(t)
+
+    def rate_noise(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        This is our sigma. It is the derivative of total_noise w.r.t. t.
+        d/dt (1 - alpha_t) = -alpha'_t
+        """
+        if self.schedule == 'linear':
+            # d/dt(t) = 1
+            return torch.ones_like(t)
+        elif self.schedule == 'cosine':
+            # d/dt (1 - cos(t*pi/2)) = (pi/2) * sin(t*pi/2)
+            return (math.pi / 2.0) * torch.sin(t * math.pi / 2.0)
+
+    def __call__(self, t):
+        return self.total_noise(t), self.rate_noise(t)

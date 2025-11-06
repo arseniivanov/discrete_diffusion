@@ -24,17 +24,18 @@ model:
 
 # Diffusion noise settings
 noise:
-  # Type can be 'log_linear' or 'geometric'
+  # Type can be 'log_linear' or 'geometric' or 'masking'
   type: "log_linear"
   sigma_min: 1.0e-4
   sigma_max: 20.0
+  schedule: "cosine"
 
 # Trainer settings
 trainer:
   n_epochs: 2
   lr: 1.0e-3
   # Use Muon optimizer for weight matrices
-  use_muon: True
+  use_muon: False
   # Use data distribution for sampling
   prob_sampling: False
 
