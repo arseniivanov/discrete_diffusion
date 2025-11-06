@@ -35,6 +35,7 @@ def transition(x_t: torch.Tensor, delta_sigma: torch.Tensor, sh: StringHandler) 
 def distribution_transition(
     x_t: torch.Tensor,
     delta_sigma: torch.Tensor,
+    sh: StringHandler,
     distribution: torch.Tensor
 ) -> torch.Tensor:
     """
@@ -51,7 +52,11 @@ def distribution_transition(
     Returns:
         trans_probs:  (B, L, V) tensor of categorical probabilities.
     """
-    p_move = 1 - torch.exp(-delta_sigma[..., None]) # Shape: [B, L, 1]
+    B, L = x_t.shape
+    vocab_size = sh.get_vocab_size()
+    p_move = 1 - torch.exp(-delta_sigma[..., None])
+    trans_base = p_move * distribution.view(1, 1, -1)
+    trans = trans_base.expand(B, L, vocab_size).clone()
     trans = p_move * distribution.view(1, 1, -1)
     diag_fill = 1 - trans.sum(dim=-1, keepdim=True) + torch.gather(trans, -1, x_t[..., None])
     trans = trans.scatter(-1, x_t[..., None], diag_fill)
@@ -119,7 +124,7 @@ def sample_substitution(model, noise, sh, cfg, device, dataset):
             
             # FAIRNESS BRANCH: Use the correct transition kernel
             if distribution is not None:
-                probs = stag_score * distribution_transition(x, delta_sigma, distribution)
+                probs = stag_score * distribution_transition(x, delta_sigma, sh ,distribution)
             else:
                 probs = stag_score * transition(x, delta_sigma, sh)
                 
