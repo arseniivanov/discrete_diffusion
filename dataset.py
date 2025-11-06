@@ -12,13 +12,21 @@ class StringHandler():
         with open(meta_path, 'rb') as f:
             self.meta = pickle.load(f)
 
+        mask_token_string = '[MASK]'
+        if mask_token_string not in self.meta['stoi']:
+            new_idx = self.meta['vocab_size']
+            self.meta['stoi'][mask_token_string] = new_idx
+            self.meta['itos'][new_idx] = mask_token_string
+            self.meta['vocab_size'] += 1
+        
+        self.mask_token_id = self.meta['stoi'][mask_token_string]
+
     def itos(self, idx):
-        itos = self.meta['itos'] # index to string
-        return itos[idx]
+        # We need to handle potential out-of-bounds index if meta file is not updated
+        return self.meta['itos'].get(idx, '')
 
     def stoi(self, strng):
-        stoi = self.meta['stoi'] # string to index
-        return stoi[strng]
+        return self.meta['stoi'].get(strng)
 
     def get_vocab_size(self):
         return self.meta['vocab_size']
@@ -148,6 +156,28 @@ def perturb_batch(batch: torch.Tensor, sigma_bar: torch.Tensor, sh: StringHandle
     batch_pert = torch.where(move_mask, new_ids, batch)
     return batch_pert
 
+    
+def perturb_batch_with_masking(x0: torch.Tensor, sigma_bar: torch.Tensor, sh: StringHandler) -> torch.Tensor:
+    """
+    Perturbs a batch of data by replacing tokens with a [MASK] token.
+
+    Args:
+        x0 (torch.Tensor): The original clean tokens (B, L).
+        sigma_bar (torch.Tensor): The probability of masking for each item in the batch (B, 1).
+        sh (StringHandler): The string handler to get the MASK token ID.
+
+    Returns:
+        torch.Tensor: The perturbed (masked) batch of tokens.
+    """
+    # Get the ID for your [MASK] token
+    mask_token_id = sh.mask_token_id
+    rand_probs = torch.rand_like(x0, dtype=torch.float32)
+    should_mask = rand_probs < sigma_bar
+    mask_tokens = torch.full_like(x0, fill_value=mask_token_id)
+    x_t = torch.where(should_mask, mask_tokens, x0)
+    return x_t
+
+  
 
 def print_wrapped(long_text, width=80, **kwargs):
     """

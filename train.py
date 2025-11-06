@@ -4,11 +4,11 @@ from hydra.core.hydra_config import HydraConfig
 import torch
 from torch.distributions import Categorical
 from dataset import get_data_loader, StringHandler, print_wrapped, decode
-from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise
+from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise, MaskingNoise
 import torch.optim as optim
 from losses import loss_function
 import os
-from inference_helpers import staggered_score, transition, sample_categorical
+from inference_helpers import staggered_score, transition, sample_categorical, distribution_transition, sample_masking, sample_substitution
 from tqdm import tqdm
 import time
 import random
@@ -47,6 +47,8 @@ def main(cfg: DictConfig) -> None:
     vocab_size = sh.get_vocab_size()
     if cfg.noise.type == 'geometric':
         noise = GeometricNoise(sigma_min=cfg.noise.sigma_min, sigma_max=cfg.noise.sigma_max)
+    elif cfg.noise.type == 'masking':
+        noise = MaskingNoise(schedule=cfg.noise.schedule)
     else:
         noise = LogLinearNoise()
 
@@ -150,73 +152,40 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             f.write("\n\n--- Final Qualitative Sample ---\n")
             model.eval() # Set model to evaluation mode for inference
             
-            vocab_size = sh.get_vocab_size()
-            steps = cfg.inference.steps
-            eps = cfg.inference.eps
-            timesteps = torch.linspace(1, eps, steps + 1, device=device)
-            step_size = (1 - eps) / steps
-            x = torch.randint(0, vocab_size, (1, cfg.data.context_length), device=device)
-
-            with torch.no_grad():
-                for i in tqdm(range(steps + 1), desc="Generating final sample"):
-                    t = timesteps[i] * torch.ones(x.shape[0], 1, device=device)
-                    curr_sigma_bar = noise(t)[0]
-                    
-                    if i < steps:
-                        next_sigma_bar = noise(t - step_size)[0]
-                        delta_sigma = curr_sigma_bar - next_sigma_bar
-                    else: # Last denoising step
-                        delta_sigma = curr_sigma_bar
-
-                    log_score = model(x, curr_sigma_bar)
-                    score = torch.exp(log_score)
-
-                    stag_score = staggered_score(score, delta_sigma)
-                    probs = stag_score * transition(x, delta_sigma, sh)
-                    x = sample_categorical(probs)
+            final_x = None
+            if cfg.noise.type == 'masking':
+                final_x = sample_masking(model, noise, sh, cfg, device)
+            else: # Covers 'geometric' and 'loglinear'
+                final_x = sample_substitution(model, noise, sh, cfg, device, dataset)
             
-            final_text = decode(x[0], sh)
+            final_text = decode(final_x[0], sh)
             
             f.write(final_text)
-            
+
             print("\n--- Final Generated Text ---")
             print_wrapped(final_text, end='\n\n')
 
     print(f"Training finished. Final loss: {final_loss:.4f}. Duration: {duration_str}")
 
-
-def run_inference(cfg: DictConfig, model, noise, sh, device, vocab_size):
-    """Contains the inference (sampling) logic."""
+def run_inference(cfg: DictConfig, model, noise, sh, device, vocab_size, dataset):
+    """
+    Contains the fair inference (sampling) logic that dispatches to the correct method.
+    """
     model.load_state_dict(torch.load(hydra.utils.to_absolute_path(cfg.inference.model_path), weights_only=True))
     model.eval()
 
-    steps = cfg.inference.steps
-    eps = cfg.inference.eps
-    timesteps = torch.linspace(1, eps, steps + 1, device=device)
-    step_size = (1 - eps) / steps
-    x = torch.randint(0, vocab_size, (1, cfg.data.context_length), device=device)
+    final_x = None
+    if cfg.noise.type == 'masking':
+        print("Using Masking-based sampling (iterative unmasking)...")
+        final_x = sample_masking(model, noise, sh, cfg, device)
+    else: # Covers 'geometric' and 'loglinear' which use substitution
+        print("Using Substitution-based sampling...")
+        final_x = sample_substitution(model, noise, sh, cfg, device, dataset)
+    
+    final_text = decode(final_x[0], sh)
 
-    with torch.no_grad():
-        for i in tqdm(range(steps + 1), desc="Inference Step"):
-            t = timesteps[i] * torch.ones(x.shape[0], 1, device=device)
-            curr_sigma_bar = noise(t)[0]
-            
-            if i < steps:
-                next_sigma_bar = noise(t - step_size)[0]
-                delta_sigma = curr_sigma_bar - next_sigma_bar
-            else: # Last denoising step
-                delta_sigma = curr_sigma_bar
-
-            log_score = model(x, curr_sigma_bar)
-            score = torch.exp(log_score)
-
-            stag_score = staggered_score(score, delta_sigma)
-            probs = stag_score * transition(x, delta_sigma, sh)
-            x = sample_categorical(probs)
-
-        print(f'\n--- Final Decoded Text ---')
-        print_wrapped(decode(x[0], sh), end='\n\n', flush=True)
-
+    print(f'\n--- Final Decoded Text ---')
+    print_wrapped(final_text, end='\n\n', flush=True)
 
 if __name__ == "__main__":
     main()
