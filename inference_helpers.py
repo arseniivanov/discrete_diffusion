@@ -57,7 +57,6 @@ def distribution_transition(
     p_move = 1 - torch.exp(-delta_sigma[..., None])
     trans_base = p_move * distribution.view(1, 1, -1)
     trans = trans_base.expand(B, L, vocab_size).clone()
-    trans = p_move * distribution.view(1, 1, -1)
     diag_fill = 1 - trans.sum(dim=-1, keepdim=True) + torch.gather(trans, -1, x_t[..., None])
     trans = trans.scatter(-1, x_t[..., None], diag_fill)
     
