@@ -8,7 +8,7 @@ from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise, MaskingNoise
 import torch.optim as optim
 from losses import loss_function
 import os
-from inference_helpers import staggered_score, transition, sample_categorical, distribution_transition, sample_masking, sample_substitution
+from inference_helpers import sample_masking, sample_substitution
 from tqdm import tqdm
 import time
 import random
@@ -64,7 +64,7 @@ def main(cfg: DictConfig) -> None:
     model_path = hydra.utils.to_absolute_path(cfg.inference.model_path)
     if os.path.exists(model_path) and cfg.inference.run_inference is True:
         print(f"Found existing model at {model_path}. Running inference.")
-        run_inference(cfg, model, noise, sh, device, vocab_size)
+        run_inference(cfg, model, noise, sh, device, val_dataset)
     else:
         print("No existing model found. Starting training.")
         run_training(cfg, model, noise, sh, device, train_dataloader, dataset, output_dir, val_dataset)
@@ -167,7 +167,7 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
 
     print(f"Training finished. Final loss: {final_loss:.4f}. Duration: {duration_str}")
 
-def run_inference(cfg: DictConfig, model, noise, sh, device, vocab_size, dataset):
+def run_inference(cfg: DictConfig, model, noise, sh, device, dataset):
     """
     Contains the fair inference (sampling) logic that dispatches to the correct method.
     """
