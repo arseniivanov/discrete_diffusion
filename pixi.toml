@@ -20,6 +20,9 @@ safetensors = "*"
 requests = "*"
 hydra-core = "*"
 
+[pypi-dependencies]
+flash-linear-attention = "*"
+
 [tasks]
 install = "pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128"
 pillow_formats = "pip install pillow=='11.3.0' pillow-jxl-plugin=='1.3.4'"

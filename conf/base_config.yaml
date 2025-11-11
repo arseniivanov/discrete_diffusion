@@ -15,27 +15,40 @@ data:
 
 # Model architecture
 model:
-  n_layer: 2
-  n_head: 1
+  n_layer: 3
+  n_head: 2
   n_embd: 384
   cond_dim: 64
   dropout: 0.1
   bias: False
+  timestep_embedding: False
+  # Kimi Delta Attention settings
+  use_kda: false                 # Enable KDA replacement
+  kda_layers: [0, 1]           # Replace attention in layers 0 and 2 (set to null for all layers)
+  
+  # KDA hyperparameters (tune these for your model size)
+  kda_expand_v: 2.0            # Expand factor for value projection (1.5-2.0 is typical)
+  kda_num_v_heads: null        # null defaults to n_head, or set explicitly
+  kda_use_short_conv: true     # Enable chunked convolution for memory efficiency
+  kda_allow_neg_eigval: true   # Allow negative eigenvalues in delta rule
+  kda_conv_size: 4             # Convolution kernel size (reduce to 2 if OOM)
+  kda_norm_eps: 1e-5           # RMSNorm epsilon
+  kda_mode: 'kimi'             # 'kimi' or 'gated' (gated is slightly faster but experimental)
 
 # Diffusion noise settings
 noise:
   # Type can be 'log_linear' or 'geometric' or 'masking'
-  type: "log_linear"
+  type: "masking"
   sigma_min: 1.0e-4
   sigma_max: 20.0
   schedule: "cosine"
 
 # Trainer settings
 trainer:
-  n_epochs: 2
+  n_epochs: 3
   lr: 1.0e-3
   # Use Muon optimizer for weight matrices
-  use_muon: False
+  use_muon: True
   # Use data distribution for sampling
   prob_sampling: False
 

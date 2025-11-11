@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import argparse
 import yaml  # You might need to install PyYAML: pip install pyyaml
+from datetime import datetime
 
 # --- Argument Parsing ---
 parser = argparse.ArgumentParser(description="Plot training and validation losses from Hydra runs.")
@@ -145,6 +146,16 @@ if all_log_files:
     ax.legend(loc='best', fontsize=legend_fontsize)
     ax.grid(True, which='both', linestyle='--', linewidth=0.5)
     plt.tight_layout()
+    
+    current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    if args.date:
+        filename = f"loss_plot_{args.date}.png"
+    else:
+        filename = f"loss_plot_{current_time}.png"
+
+    plt.savefig(filename, dpi=300)
+    print(f"\nPlot saved to {filename}")
+
     plt.show()
 
 # --- Print Filtered Qualitative Samples ---

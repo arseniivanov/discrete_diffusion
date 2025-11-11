@@ -53,8 +53,17 @@ def main(cfg: DictConfig) -> None:
         noise = LogLinearNoise()
 
     model_args = dict(n_layer=cfg.model.n_layer, n_head=cfg.model.n_head, n_embd=cfg.model.n_embd,
-                      cond_dim=cfg.model.cond_dim, bias=cfg.model.bias, vocab_size=vocab_size,
-                      block_size=cfg.data.context_length, dropout=cfg.model.dropout)
+                        cond_dim=cfg.model.cond_dim, bias=cfg.model.bias, vocab_size=vocab_size,
+                        block_size=cfg.data.context_length, dropout=cfg.model.dropout, timestep_embedding=cfg.model.timestep_embedding,
+                        use_kda=getattr(cfg.model, 'use_kda', False),
+                        kda_layers=getattr(cfg.model, 'kda_layers', None),
+                        kda_expand_v=getattr(cfg.model, 'kda_expand_v', 2.0),
+                        kda_num_v_heads=getattr(cfg.model, 'kda_num_v_heads', None),
+                        kda_use_short_conv=getattr(cfg.model, 'kda_use_short_conv', True),
+                        kda_allow_neg_eigval=getattr(cfg.model, 'kda_allow_neg_eigval', True),
+                        kda_conv_size=getattr(cfg.model, 'kda_conv_size', 4),
+                        kda_norm_eps=getattr(cfg.model, 'kda_norm_eps', 1e-5),
+                        kda_mode=getattr(cfg.model, 'kda_mode', 'kimi'))
 
     config = GPTConfig(**model_args)
     model = GPT(config).to(device)
