@@ -5,6 +5,7 @@ from torch.nn import functional as F
 from typing import Optional
 from dataclasses import dataclass
 import abc
+from fla.layers.kda import KimiDeltaAttention
 
 @dataclass
 class GPTConfig:
@@ -16,6 +17,20 @@ class GPTConfig:
     cond_dim: int = 64
     dropout: float = 0.0
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    timestep_embedding: bool = True
+
+    # KDA settings
+    use_kda: bool = False  # Global toggle
+    kda_layers: Optional[list] = None  # Layers to replace (e.g., [0, 2, 4, 6, 8, 10])
+    
+    # KDA hyperparameters (tune these)
+    kda_expand_v: float = 2.0
+    kda_num_v_heads: int = None
+    kda_use_short_conv: bool = True
+    kda_allow_neg_eigval: bool = True
+    kda_conv_size: int = 4
+    kda_norm_eps: float = 1e-5
+    kda_mode: str = 'kimi'
 
 class MLP(nn.Module):
 
@@ -32,6 +47,38 @@ class MLP(nn.Module):
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
+
+class DeltaAttention(nn.Module):
+    def __init__(self, config, layer_idx=0):
+        super().__init__()
+        
+        # Map your GPTConfig to KDA parameters
+        self.attn = KimiDeltaAttention(
+            mode=getattr(config, 'kda_mode', 'chunk'),
+            hidden_size=config.n_embd,
+            expand_v=getattr(config, 'kda_expand_v', 2.0),
+            head_dim=config.n_embd // config.n_head,
+            num_heads=config.n_head,
+            num_v_heads=getattr(config, 'kda_num_v_heads', config.n_head),
+            use_short_conv=getattr(config, 'kda_use_short_conv', True),
+            allow_neg_eigval=getattr(config, 'kda_allow_neg_eigval', True),
+            conv_size=getattr(config, 'kda_conv_size', 4),
+            norm_eps=getattr(config, 'kda_norm_eps', 1e-5),
+            layer_idx=layer_idx,
+        )
+        
+        self.resid_dropout = nn.Dropout(config.dropout)
+        
+    def forward(self, x):
+        # No causal mask, no caching for diffusion
+        out, _, _ = self.attn(
+            hidden_states=x,
+            attention_mask=None,  # Full bidirectional attention
+            past_key_values=None,
+            use_cache=False,
+            output_attentions=False,
+        )
+        return self.resid_dropout(out)
 
 class SelfAttention(nn.Module):
 
@@ -91,28 +138,41 @@ def bias_add_scale(
     return out
 
 class DDiTBlock(nn.Module):
-
-    def __init__(self, config):
+    def __init__(self, config, layer_idx=0):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = SelfAttention(config)
+        
+        # Select attention type
+        use_kda = getattr(config, 'use_kda', False)
+        kda_layers = getattr(config, 'kda_layers', None)
+        
+        if use_kda and (kda_layers is None or layer_idx in kda_layers):
+            self.attn = DeltaAttention(config, layer_idx=layer_idx)
+        else:
+            self.attn = SelfAttention(config)
+            
         self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
-
-        self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd)
+        self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
         self.adaLN_modulation.weight.data.zero_()
         self.adaLN_modulation.bias.data.zero_()
 
     def forward(self, x, c):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c)[:, None].chunk(6, dim=2)
+        
+        # Self-attention block
         x_skip = x
         x = modulate(self.ln_1(x), shift_msa, scale_msa)
         x = self.attn(x)
-
-        x = bias_add_scale(self.attn(self.ln_1(x)), None, gate_msa, x_skip)
-        x = bias_add_scale(self.mlp(modulate(self.ln_2(x), shift_mlp, scale_mlp)), None, gate_mlp, x)
+        x = gate_msa * x + x_skip  # Residual connection with gating
+        
+        # MLP block
+        x_skip = x
+        x = modulate(self.ln_2(x), shift_mlp, scale_mlp)
+        x = self.mlp(x)
+        x = gate_mlp * x + x_skip
+        
         return x
-
 
 class DDitFinalLayer(nn.Module):
     def __init__(self, config):
@@ -178,14 +238,13 @@ class MLPEmbedder(nn.Module):
     """
     Embeds scalar timesteps into vector representations.
     """
-    def __init__(self, hidden_size, frequency_embedding_size=256, silu=True):
+    def __init__(self, hidden_size):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(1, hidden_size, bias=True),
             nn.SiLU(),
             nn.Linear(hidden_size, hidden_size, bias=True),
         )
-        self.frequency_embedding_size = frequency_embedding_size
 
     def forward(self, t):
         t_emb = self.mlp(t.unsqueeze(-1))
@@ -198,12 +257,15 @@ class GPT(nn.Module):
         assert config.vocab_size is not None
         assert config.block_size is not None
         self.config = config
-        self.sigma_map = TimestepEmbedder(config.cond_dim)
+        if config.timestep_embedding:
+            self.sigma_map = TimestepEmbedder(config.cond_dim)
+        else:
+            self.sigma_map = MLPEmbedder(config.cond_dim)
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
-            h = nn.ModuleList([DDiTBlock(config) for _ in range(config.n_layer)]),
+            h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
         ))
         self.lm_head = DDitFinalLayer(config)
