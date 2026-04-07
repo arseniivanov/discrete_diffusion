@@ -5,5 +5,5 @@ defaults:
 hydra:
   sweeper:
     params:
-      model.gated_delta_layers: '"[0]", "[1]", "[2]", "[0, 1]"'
-
+      noise.type: log_linear, masking
+      noise.schedule: cosine, linear

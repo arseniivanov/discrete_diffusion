@@ -1,7 +1,56 @@
 import torch
+import torch.nn.functional as F
 from model import GPT, Noise, MaskingNoise
 from dataset import StringHandler, perturb_batch, perturb_batch_with_distribution, perturb_batch_with_masking
 from typing import Optional
+
+def flow_loss(
+        model: GPT,
+        x1: torch.Tensor,
+        noise=None, # Argument kept for compatibility, ignored
+        sh=None,    # Argument kept for compatibility, ignored
+        sampler=None, # Argument kept for compatibility, ignored
+        sampling_eps=1e-4 # Minimum time to avoid numerical instability
+    ) -> torch.Tensor:
+    """
+    Discrete Flow Matching Loss.
+    We interpolate between Noise (x0) and Data (x1) based on time t.
+    The model tries to predict x1.
+    """
+    b, t_len = x1.shape
+    device = x1.device
+    vocab_size = model.config.vocab_size
+
+    # 1. Sample Time t ~ Uniform[0, 1]
+    t = torch.rand(b, device=device)
+    
+    # 2. Sample Noise x0 ~ Uniform(Vocab)
+    # (The Meta snippet uses uniform noise. You could use your unigram dataset.distribution if you prefer)
+    x0 = torch.randint(0, vocab_size, (b, t_len), device=device)
+
+    # 3. Interpolate (The Flow Step)
+    # In discrete space, linear interpolation of probability means:
+    # "With probability t, the token is clean (x1). With probability 1-t, it is noise (x0)"
+    
+    # Generate a mask where values < t are TRUE (keep x1)
+    # We reshape t to [b, 1] for broadcasting
+    mask_prob = t.view(-1, 1)
+    # Sample a random map [0,1] for every token
+    decision_map = torch.rand(b, t_len, device=device)
+    
+    # x_t = x1 where map < t, else x0
+    x_t = torch.where(decision_map < mask_prob, x1, x0)
+
+    # 4. Model Prediction
+    # We pass x_t and t. The model predicts logits for x1.
+    # Note: We pass 't' into the 'sigma' argument of your model.
+    logits = model(x_t, t)
+    
+    # 5. Loss: Cross Entropy between prediction and real x1
+    # Reshape for CrossEntropy: (Batch * Seq, Vocab) vs (Batch * Seq)
+    loss = F.cross_entropy(logits.view(-1, vocab_size), x1.view(-1))
+
+    return loss
 
 def score_entropy(
     score_log: torch.Tensor,
