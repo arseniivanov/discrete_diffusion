@@ -5,7 +5,5 @@ defaults:
 hydra:
   sweeper:
     params:
-      noise.type: log_linear,geometric
-      trainer.lr: 1e-3, 1e-4
-      trainer.use_muon: True, False
-      trainer.prob_sampling: True, False
+      noise.type: log_linear, masking
+      noise.schedule: cosine, linear
