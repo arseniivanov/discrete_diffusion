@@ -6,9 +6,9 @@ from torch.distributions import Categorical
 from dataset import get_data_loader, StringHandler, print_wrapped, decode
 from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise, MaskingNoise
 import torch.optim as optim
-from losses import loss_function
+from losses import loss_function, flow_loss
 import os
-from inference_helpers import sample_masking, sample_substitution
+from inference_helpers import sample_masking, sample_substitution, sample_discrete_flow
 from tqdm import tqdm
 import time
 import random
@@ -113,7 +113,7 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
         progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{cfg.trainer.n_epochs}")
         for i, batch in enumerate(progress_bar):
             batch = batch.to(device)
-            loss = loss_function(model, batch, noise, sh, sampling_eps=cfg.noise.sigma_min, sampler=sampler)
+            loss = flow_loss(model, batch, noise, sh, sampling_eps=cfg.noise.sigma_min, sampler=sampler)
             final_loss = loss.item()
 
             if cfg.log_run:
@@ -137,7 +137,7 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
                     for batch in val_dataloader:
                         batch = batch.to(device)
                         # The same loss function you use for training
-                        loss = loss_function(model, batch, noise, sh, sampler=None) 
+                        loss = flow_loss(model, batch, noise, sh, sampler=None) 
                         total_val_loss += loss.item()
 
                 avg_val_loss = total_val_loss / len(val_dataloader)
