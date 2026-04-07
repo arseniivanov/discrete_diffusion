@@ -1,0 +1,9 @@
+defaults:
+  - muon_masking  # Inherit all the defaults from your main config
+  - _self_
+  - override hydra/sweeper: basic # Specify we are using the basic sweeper
+
+hydra:
+  sweeper:
+    params:
+      model.dropout: 0.0, 0.1, 0.25

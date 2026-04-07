@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from typing import Optional
 from dataclasses import dataclass
 import abc
-from fla.layers.kda import KimiDeltaAttention
+from fla.layers.gated_deltanet import GatedDeltaNet
 
 @dataclass
 class GPTConfig:
@@ -19,18 +19,16 @@ class GPTConfig:
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     timestep_embedding: bool = True
 
-    # KDA settings
-    use_kda: bool = False  # Global toggle
-    kda_layers: Optional[list] = None  # Layers to replace (e.g., [0, 2, 4, 6, 8, 10])
-    
-    # KDA hyperparameters (tune these)
-    kda_expand_v: float = 2.0
-    kda_num_v_heads: int = None
-    kda_use_short_conv: bool = True
-    kda_allow_neg_eigval: bool = True
-    kda_conv_size: int = 4
-    kda_norm_eps: float = 1e-5
-    kda_mode: str = 'kimi'
+    # GatedDeltaNet settings (replaces KDA)
+    use_gated_delta: bool = False
+    gated_delta_layers: Optional[list] = None
+    attn_mode: str = 'chunk'  # 'chunk' or 'fused_recurrent'
+    gated_delta_expand_v: float = 1.0
+    gated_delta_use_gate: bool = True
+    gated_delta_use_short_conv: bool = False  # Must be False to avoid OOM
+    gated_delta_allow_neg_eigval: bool = True
+    gated_delta_conv_size: int = 2  # Ignored when use_short_conv=False
+    gated_delta_norm_eps: float = 1e-5
 
 class MLP(nn.Module):
 
@@ -48,36 +46,30 @@ class MLP(nn.Module):
         x = self.dropout(x)
         return x
 
-class DeltaAttention(nn.Module):
+class GatedDeltaAttention(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
         
-        # Map your GPTConfig to KDA parameters
-        self.attn = KimiDeltaAttention(
-            mode=getattr(config, 'kda_mode', 'chunk'),
+        # FORCE disable short conv (the OOM culprit)
+        use_short_conv = False
+        
+        self.attn = GatedDeltaNet(
             hidden_size=config.n_embd,
-            expand_v=getattr(config, 'kda_expand_v', 2.0),
+            expand_v=getattr(config, 'gated_delta_expand_v', 1.0),
             head_dim=config.n_embd // config.n_head,
             num_heads=config.n_head,
-            num_v_heads=getattr(config, 'kda_num_v_heads', config.n_head),
-            use_short_conv=getattr(config, 'kda_use_short_conv', True),
-            allow_neg_eigval=getattr(config, 'kda_allow_neg_eigval', True),
-            conv_size=getattr(config, 'kda_conv_size', 4),
-            norm_eps=getattr(config, 'kda_norm_eps', 1e-5),
+            use_gate=getattr(config, 'gated_delta_use_gate', True),
+            use_short_conv=use_short_conv,
+            mode=getattr(config, 'attn_mode', 'chunk'),
+            allow_neg_eigval=getattr(config, 'gated_delta_allow_neg_eigval', True),
+            conv_size=getattr(config, 'gated_delta_conv_size', 2),
+            norm_eps=getattr(config, 'gated_delta_norm_eps', 1e-5),
             layer_idx=layer_idx,
         )
-        
         self.resid_dropout = nn.Dropout(config.dropout)
         
     def forward(self, x):
-        # No causal mask, no caching for diffusion
-        out, _, _ = self.attn(
-            hidden_states=x,
-            attention_mask=None,  # Full bidirectional attention
-            past_key_values=None,
-            use_cache=False,
-            output_attentions=False,
-        )
+        out, _, _ = self.attn(hidden_states=x)
         return self.resid_dropout(out)
 
 class SelfAttention(nn.Module):
@@ -143,11 +135,11 @@ class DDiTBlock(nn.Module):
         self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
         
         # Select attention type
-        use_kda = getattr(config, 'use_kda', False)
-        kda_layers = getattr(config, 'kda_layers', None)
+        use_gated_delta = getattr(config, 'use_gated_delta', False)
+        gated_delta_layers = getattr(config, 'gated_delta_layers', None) 
         
-        if use_kda and (kda_layers is None or layer_idx in kda_layers):
-            self.attn = DeltaAttention(config, layer_idx=layer_idx)
+        if use_gated_delta and (gated_delta_layers is None or layer_idx in gated_delta_layers):
+            self.attn = GatedDeltaAttention(config, layer_idx=layer_idx)
         else:
             self.attn = SelfAttention(config)
             

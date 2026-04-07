@@ -1,5 +1,9 @@
 # A descriptive name for this experiment run
-run_name: "shakespeare_diffusion_base"
+run_name: "shakespeare_diffusion_muon_masking"
+
+defaults:
+  - base_config
+  - _self_
 
 # General settings
 seed: 42
@@ -15,24 +19,12 @@ data:
 
 # Model architecture
 model:
-  n_layer: 4
-  n_head: 4
+  n_layer: 3
+  n_head: 2
   n_embd: 384
   cond_dim: 64
-  dropout: 0.0
+  dropout: 0.1
   bias: False
-  timestep_embedding: False
-  use_gated_delta: false
-  gated_delta_layers: [0]    # Replace layers 0 
-  
-  # GatedDeltaNet hyperparameters (memory-optimized)
-  attn_mode: 'chunk'            # 'chunk' or 'fused_recurrent'
-  gated_delta_expand_v: 1.0     # Match SelfAttention size (critical!)
-  gated_delta_use_gate: true    # Keep gate for expressivity
-  gated_delta_use_short_conv: false  # Must disable to avoid OOM
-  gated_delta_allow_neg_eigval: true
-  gated_delta_conv_size: 2      # Ignored when use_short_conv=false
-  gated_delta_norm_eps: 1e-5
 
 # Diffusion noise settings
 noise:
@@ -44,7 +36,7 @@ noise:
 
 # Trainer settings
 trainer:
-  n_epochs: 5
+  n_epochs: 8
   lr: 1.0e-3
   # Use Muon optimizer for weight matrices
   use_muon: True

@@ -13,6 +13,7 @@ from tqdm import tqdm
 import time
 import random
 import numpy as np
+import ast
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -55,16 +56,20 @@ def main(cfg: DictConfig) -> None:
     model_args = dict(n_layer=cfg.model.n_layer, n_head=cfg.model.n_head, n_embd=cfg.model.n_embd,
                         cond_dim=cfg.model.cond_dim, bias=cfg.model.bias, vocab_size=vocab_size,
                         block_size=cfg.data.context_length, dropout=cfg.model.dropout, timestep_embedding=cfg.model.timestep_embedding,
-                        use_kda=getattr(cfg.model, 'use_kda', False),
-                        kda_layers=getattr(cfg.model, 'kda_layers', None),
-                        kda_expand_v=getattr(cfg.model, 'kda_expand_v', 2.0),
-                        kda_num_v_heads=getattr(cfg.model, 'kda_num_v_heads', None),
-                        kda_use_short_conv=getattr(cfg.model, 'kda_use_short_conv', True),
-                        kda_allow_neg_eigval=getattr(cfg.model, 'kda_allow_neg_eigval', True),
-                        kda_conv_size=getattr(cfg.model, 'kda_conv_size', 4),
-                        kda_norm_eps=getattr(cfg.model, 'kda_norm_eps', 1e-5),
-                        kda_mode=getattr(cfg.model, 'kda_mode', 'kimi'))
+                        use_gated_delta=getattr(cfg.model, 'use_gated_delta', False),
+                        gated_delta_layers=getattr(cfg.model, 'gated_delta_layers', None),
+                        attn_mode=getattr(cfg.model, 'attn_mode', 'chunk'),
+                        gated_delta_expand_v=getattr(cfg.model, 'gated_delta_expand_v', 1.0),
+                        gated_delta_use_gate=getattr(cfg.model, 'gated_delta_use_gate', True),
+                        gated_delta_use_short_conv=False,  # Force disable
+                        gated_delta_allow_neg_eigval=getattr(cfg.model, 'gated_delta_allow_neg_eigval', True),
+                        gated_delta_conv_size=getattr(cfg.model, 'gated_delta_conv_size', 2),
+                        gated_delta_norm_eps=getattr(cfg.model, 'gated_delta_norm_eps', 1e-5),
+                    )
 
+    if cfg.model.use_gated_delta:
+        model_args['gated_delta_layers'] = ast.literal_eval(model_args['gated_delta_layers'])
+        
     config = GPTConfig(**model_args)
     model = GPT(config).to(device)
     
