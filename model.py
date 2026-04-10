@@ -7,6 +7,20 @@ from dataclasses import dataclass
 import abc
 from fla.layers.gated_deltanet import GatedDeltaNet
 
+class SwiGLU(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        hidden_dim = int((4 * config.n_embd) * (2 / 3))
+        self.w1 = nn.Linear(config.n_embd, hidden_dim, bias=False)
+        self.w2 = nn.Linear(config.n_embd, hidden_dim, bias=False)
+        self.c_proj = nn.Linear(hidden_dim, config.n_embd, bias=False)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = F.silu(self.w1(x)) * self.w2(x)
+        x = self.c_proj(x)
+        return self.dropout(x)
+
 @dataclass
 class GPTConfig:
     block_size: int = 1024
@@ -115,6 +129,24 @@ class SelfAttention(nn.Module):
         y = self.resid_dropout(self.c_proj(y))
         return y
 
+class GLMAttention(nn.Module):
+    def __init__(self, config) -> None:
+        super().__init__()
+        assert config.n_embd % config.n_head == 0
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        # output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        # regularization
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.dropout = config.dropout
+        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+
+
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     return x * (1 + scale) + shift
 
@@ -132,7 +164,7 @@ def bias_add_scale(
 class DDiTBlock(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
-        self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_1 = nn.RMSNorm(config.n_embd, bias=config.bias)
         
         # Select attention type
         use_gated_delta = getattr(config, 'use_gated_delta', False)
@@ -143,7 +175,7 @@ class DDiTBlock(nn.Module):
         else:
             self.attn = SelfAttention(config)
             
-        self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_2 = nn.RMSNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
         self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
         self.adaLN_modulation.weight.data.zero_()
@@ -258,7 +290,7 @@ class GPT(nn.Module):
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
-            ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
+            ln_f = nn.RMSNorm(config.n_embd, bias=config.bias),
         ))
         self.lm_head = DDitFinalLayer(config)
 
