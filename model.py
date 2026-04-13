@@ -31,9 +31,9 @@ def get_norm(config):
     if norm_type not in NORM_LAYERS:
         raise ValueError(f"Unknown norm type: {norm_type}")
     if norm_type == "rms":
-        return NORM_LAYERS[norm_type](config.n_embd, eps=1e-5)
+        return NORM_LAYERS[norm_type](config.n_embd, eps=1e-5, elementwise_affine=False)
     else:
-        return NORM_LAYERS[norm_type](config.n_embd, bias=config.bias)
+        return NORM_LAYERS[norm_type](config.n_embd, bias=config.bias, elementwise_affine=False)
 
 @dataclass
 class GPTConfig:
