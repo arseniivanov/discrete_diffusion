@@ -21,6 +21,20 @@ class SwiGLU(nn.Module):
         x = self.c_proj(x)
         return self.dropout(x)
 
+NORM_LAYERS = {
+    "rms": nn.RMSNorm,
+    "ln": nn.LayerNorm,
+}
+
+def get_norm(config):
+    norm_type = config.norm
+    if norm_type not in NORM_LAYERS:
+        raise ValueError(f"Unknown norm type: {norm_type}")
+    if norm_type == "rms":
+        return NORM_LAYERS[norm_type](config.n_embd, eps=1e-5)
+    else:
+        return NORM_LAYERS[norm_type](config.n_embd, bias=config.bias)
+
 @dataclass
 class GPTConfig:
     block_size: int = 1024
@@ -32,6 +46,7 @@ class GPTConfig:
     dropout: float = 0.0
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     timestep_embedding: bool = True
+    norm: str = "ln"
 
     # GatedDeltaNet settings (replaces KDA)
     use_gated_delta: bool = False
@@ -164,7 +179,7 @@ def bias_add_scale(
 class DDiTBlock(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
-        self.ln_1 = nn.RMSNorm(config.n_embd, bias=config.bias)
+        self.ln_1 = get_norm(config)
         
         # Select attention type
         use_gated_delta = getattr(config, 'use_gated_delta', False)
@@ -175,7 +190,7 @@ class DDiTBlock(nn.Module):
         else:
             self.attn = SelfAttention(config)
             
-        self.ln_2 = nn.RMSNorm(config.n_embd, bias=config.bias)
+        self.ln_2 = get_norm(config)
         self.mlp = MLP(config)
         self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
         self.adaLN_modulation.weight.data.zero_()
@@ -201,7 +216,7 @@ class DDiTBlock(nn.Module):
 class DDitFinalLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.norm_final = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.norm_final = get_norm(config)
         self.linear = nn.Linear(config.n_embd, config.vocab_size)
         self.linear.weight.data.zero_()
         self.linear.bias.data.zero_()
@@ -290,7 +305,7 @@ class GPT(nn.Module):
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
-            ln_f = nn.RMSNorm(config.n_embd, bias=config.bias),
+            ln_f = get_norm(config),
         ))
         self.lm_head = DDitFinalLayer(config)
 
