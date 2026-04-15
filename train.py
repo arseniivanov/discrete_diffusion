@@ -23,6 +23,7 @@ def set_seed(seed: int):
         torch.cuda.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
 
 @hydra.main(version_base=None, config_path="conf", config_name="base_config")
 def main(cfg: DictConfig) -> None:
@@ -72,6 +73,7 @@ def main(cfg: DictConfig) -> None:
         
     config = GPTConfig(**model_args)
     model = GPT(config).to(device)
+    model = torch.compile(model)
     
     # --- Decide to Train or Run Inference ---
     # Resolve relative model path
@@ -153,7 +155,7 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     # --- Final Logging ---
     end_time = time.time()
     duration_sec = end_time - start_time
-    duration_str = f"{(duration_sec % 3600) // 60:02.0f}m {duration_sec % 60:02.0f}s"
+    duration_str = f"{duration_sec // 3600:02.0f}h {(duration_sec % 3600) // 60:02.0f}m {duration_sec % 60:02.0f}s"
     if cfg.log_run:
         with open(summary_log_path, 'w') as f:
             f.write(f"--- Configuration ---\n{OmegaConf.to_yaml(cfg)}\n")
