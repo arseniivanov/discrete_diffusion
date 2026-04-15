@@ -15,6 +15,8 @@ import random
 import numpy as np
 import ast
 
+torch.set_float32_matmul_precision('high')
+
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -72,6 +74,7 @@ def main(cfg: DictConfig) -> None:
         
     config = GPTConfig(**model_args)
     model = GPT(config).to(device)
+    model = torch.compile(model)
     
     # --- Decide to Train or Run Inference ---
     # Resolve relative model path
@@ -148,8 +151,8 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
                 model.train() # Set the model back to training mode
 
         if cfg.save_model:
-            torch.save(model.state_dict(), os.path.join(run_dir, f'model_epoch_{epoch+1}.pth'))
-
+            state_dict = model._orig_mod.state_dict() if hasattr(model, '_orig_mod') else model.state_dict()
+            torch.save(state_dict, os.path.join(run_dir, f'model_epoch_{epoch+1}.pth'))
     # --- Final Logging ---
     end_time = time.time()
     duration_sec = end_time - start_time
