@@ -7,6 +7,17 @@ from dataclasses import dataclass
 import abc
 from fla.layers.gated_deltanet import GatedDeltaNet
 
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(end, device=freqs.device, dtype=torch.float32)
+    freqs = torch.outer(t, freqs).float()
+    return torch.polar(torch.ones_like(freqs), freqs)
+
+def apply_rotary_emb(x, freqs_cis):
+    x_ = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+    freqs_cis = freqs_cis.view(1, x.shape[1], 1, x.shape[-1] // 2).to(x_.device)
+    return torch.view_as_real(x_ * freqs_cis).flatten(3).type_as(x)
+
 class SwiGLU(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -20,6 +31,22 @@ class SwiGLU(nn.Module):
         x = F.silu(self.w1(x)) * self.w2(x)
         x = self.c_proj(x)
         return self.dropout(x)
+
+class MLP(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.gelu    = nn.GELU()
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
 
 NORM_LAYERS = {
     "rms": nn.RMSNorm,
@@ -58,22 +85,6 @@ class GPTConfig:
     gated_delta_allow_neg_eigval: bool = True
     gated_delta_conv_size: int = 2  # Ignored when use_short_conv=False
     gated_delta_norm_eps: float = 1e-5
-
-class MLP(nn.Module):
-
-    def __init__(self, config):
-        super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
-        self.dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x):
-        x = self.c_fc(x)
-        x = self.gelu(x)
-        x = self.c_proj(x)
-        x = self.dropout(x)
-        return x
 
 class GatedDeltaAttention(nn.Module):
     def __init__(self, config, layer_idx=0):
@@ -119,16 +130,23 @@ class SelfAttention(nn.Module):
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
 
-    def forward(self, x):
+    def forward(self, x, freqs_cis=None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        
+        q = q.view(B, T, self.n_head, C // self.n_head)
+        k = k.view(B, T, self.n_head, C // self.n_head)
+        
+        if freqs_cis is not None:
+            q = apply_rotary_emb(q, freqs_cis[:T])
+            k = apply_rotary_emb(k, freqs_cis[:T])
+
+        k = k.transpose(1, 2) # (B, nh, T, hs)
+        q = q.transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-        # self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=False)
@@ -165,17 +183,6 @@ class GLMAttention(nn.Module):
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     return x * (1 + scale) + shift
 
-def bias_add_scale(
-    x: torch.Tensor, bias: Optional[torch.Tensor], scale: torch.Tensor, residual: Optional[torch.Tensor]) -> torch.Tensor:
-    if bias is not None:
-        out = scale * (x + bias)
-    else:
-        out = scale * x
-
-    if residual is not None:
-        out = residual + out
-    return out
-
 class DDiTBlock(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
@@ -196,13 +203,13 @@ class DDiTBlock(nn.Module):
         self.adaLN_modulation.weight.data.zero_()
         self.adaLN_modulation.bias.data.zero_()
 
-    def forward(self, x, c):
+    def forward(self, x, c, freqs_cis=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c)[:, None].chunk(6, dim=2)
         
         # Self-attention block
         x_skip = x
         x = modulate(self.ln_1(x), shift_msa, scale_msa)
-        x = self.attn(x)
+        x = self.attn(x, freqs_cis=freqs_cis)
         x = gate_msa * x + x_skip  # Residual connection with gating
         
         # MLP block
@@ -229,8 +236,10 @@ class DDitFinalLayer(nn.Module):
     def forward(self, x, c):
         shift, scale = self.adaLN_modulation(c)[:, None].chunk(2, dim=2)
         x = modulate(self.norm_final(x), shift, scale)
-        x = self.linear(x)
-        return x
+        logits = self.linear(x)
+        softcap = 15.0
+        logits = softcap * torch.tanh(logits / softcap)
+        return logits
 
 
 class TimestepEmbedder(nn.Module):
@@ -302,12 +311,15 @@ class GPT(nn.Module):
             self.sigma_map = MLPEmbedder(config.cond_dim)
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
             ln_f = get_norm(config),
         ))
+
         self.lm_head = DDitFinalLayer(config)
+
+        self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
+        self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
 
         # init all weights
         self.apply(self._init_weights)
@@ -316,10 +328,11 @@ class GPT(nn.Module):
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
+        self.register_buffer("freqs_cis", precompute_freqs_cis(config.n_embd // config.n_head, config.block_size * 2))
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 
-    def get_num_params(self, non_embedding=True):
+    def get_num_params(self):
         """
         Return the number of parameters in the model.
         For non-embedding count (default), the position embeddings get subtracted.
@@ -327,8 +340,6 @@ class GPT(nn.Module):
         params are actually used as weights in the final layer, so we include them.
         """
         n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
-            n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
     def _init_weights(self, module):
@@ -341,17 +352,17 @@ class GPT(nn.Module):
 
     def forward(self, idx, sigma):
         sigma = sigma.reshape(-1)
-        device = idx.device
         b, t = idx.size()
         c = F.silu(self.sigma_map(sigma))
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
-        for block in self.transformer.h:
+        x = self.transformer.drop(tok_emb)
+        x0 = x
+
+        for i, block in enumerate(self.transformer.h):
+            x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             x = block(x, c)
         x = self.transformer.ln_f(x)
 
