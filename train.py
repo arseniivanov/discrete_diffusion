@@ -72,6 +72,7 @@ def main(cfg: DictConfig) -> None:
         
     config = GPTConfig(**model_args)
     model = GPT(config).to(device)
+    model = torch.compile(model)
     
     # --- Decide to Train or Run Inference ---
     # Resolve relative model path
@@ -109,11 +110,14 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     start_time = time.time()
     final_loss = 0
 
+    autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+
     for epoch in range(cfg.trainer.n_epochs):
         progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{cfg.trainer.n_epochs}")
         for i, batch in enumerate(progress_bar):
             batch = batch.to(device)
-            loss = flow_loss(model, batch, noise, sh, sampling_eps=cfg.noise.sigma_min, sampler=sampler)
+            with autocast_ctx:
+                loss = loss_function(model, batch, noise, sh, sampling_eps=cfg.noise.sigma_min, sampler=sampler)
             final_loss = loss.item()
 
             if cfg.log_run:

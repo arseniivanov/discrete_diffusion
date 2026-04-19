@@ -15,8 +15,8 @@ data:
 
 # Model architecture
 model:
-  n_layer: 4
-  n_head: 4
+  n_layer: 3
+  n_head: 2
   n_embd: 384
   cond_dim: 64
   dropout: 0.0
@@ -44,7 +44,7 @@ noise:
 
 # Trainer settings
 trainer:
-  n_epochs: 5
+  n_epochs: 2
   lr: 1.0e-3
   # Use Muon optimizer for weight matrices
   use_muon: True
