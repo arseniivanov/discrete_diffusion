@@ -14,6 +14,7 @@ import time
 import random
 import numpy as np
 import ast
+import gc
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -94,8 +95,8 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
 
     # --- Optimizer ---
     if cfg.trainer.use_muon:
-        matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2]
-        other_params = [p for n, p in model.named_parameters() if p.dim() != 2]
+        matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2 and 'transformer.h' in n]
+        other_params = [p for n, p in model.named_parameters() if not (p.dim() == 2 and 'transformer.h' in n)]
         optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr)
         optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr)
     else:
@@ -115,6 +116,13 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     for epoch in range(cfg.trainer.n_epochs):
         progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{cfg.trainer.n_epochs}")
         for i, batch in enumerate(progress_bar):
+            if i == 0 and epoch == 0:
+                gc.collect()
+                gc.freeze()
+                gc.disable()
+            elif (i + 1) % 5000 == 0:
+                gc.collect()
+
             batch = batch.to(device)
             with autocast_ctx:
                 loss = loss_function(model, batch, noise, sh, sampling_eps=cfg.noise.sigma_min, sampler=sampler)
@@ -123,33 +131,30 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             if cfg.log_run:
                 with open(loss_log_path, 'a') as f:
                     f.write(f'{epoch},{i},{final_loss}\n')
-            
             optimizer.zero_grad(set_to_none=True)
             if cfg.trainer.use_muon:
                 optimizer_matrices.zero_grad(set_to_none=True)
-            
 
             loss.backward()
             optimizer.step()
             if cfg.trainer.use_muon:
                 optimizer_matrices.step()
 
-            if i % 1000 == 0 and i > 0 and cfg.log_run:
-                model.eval()  # Set the model to evaluation mode
-                total_val_loss = 0
-                with torch.no_grad(): # Ensure no gradients are calculated
-                    for batch in val_dataloader:
-                        batch = batch.to(device)
-                        # The same loss function you use for training
-                        loss = flow_loss(model, batch, noise, sh, sampler=None) 
-                        total_val_loss += loss.item()
+        model.eval()  # Set the model to evaluation mode
+        total_val_loss = 0
+        with torch.no_grad(): # Ensure no gradients are calculated
+            for batch in val_dataloader:
+                batch = batch.to(device)
+                # The same loss function you use for training
+                loss = loss_function(model, batch, noise, sh, sampler=None) 
+                total_val_loss += loss.item()
 
-                avg_val_loss = total_val_loss / len(val_dataloader)
+        avg_val_loss = total_val_loss / len(val_dataloader)
 
-                with open(val_loss_log_path, 'a') as f:
-                    f.write(f'{epoch},{i},{avg_val_loss}\n')
+        with open(val_loss_log_path, 'a') as f:
+            f.write(f'{epoch},{avg_val_loss}\n')
 
-                model.train() # Set the model back to training mode
+        model.train() # Set the model back to training mode
 
         if cfg.save_model:
             torch.save(model.state_dict(), os.path.join(run_dir, f'model_epoch_{epoch+1}.pth'))
