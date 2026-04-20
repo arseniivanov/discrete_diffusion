@@ -130,7 +130,19 @@
   I will we do be so much and that comes here will  tak
   ```
 
+## Exp 19: Register tokens n=8 — ✓ COMMITTED (val=0.9098, -0.0032)
+- Doubling registers from 4→8 continues to improve; more global context capacity helps
+- Run: outputs/shakespeare_diffusion_base/2026-04-20_21-53-13
+- Text:
+  ```
+  s the cour your hanes; Or your come to the no more words of the cour geness to me
+  t at your come Into make the lords, and sake your fed  and they have colded what he hathebefore here
+  come to have them to see that they have your wonders:
+  And some here gone, I will not holp the world.
+  JULIET: You have none that you have been, yor  have your hates of you have you not one in this  man
+  ```
+
 ---
 
-**Current best: val_loss=0.9130**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **4 register tokens**
+**Current best: val_loss=0.9098**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**

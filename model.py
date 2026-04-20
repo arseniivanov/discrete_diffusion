@@ -274,7 +274,7 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
         ))
         # Register tokens: prepended to the sequence, stripped before output
-        self.n_registers = 4
+        self.n_registers = 8
         self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
         # RoPE frequencies: extra slots for register token positions
         head_dim = config.n_embd // config.n_head
