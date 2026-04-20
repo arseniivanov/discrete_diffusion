@@ -2,18 +2,21 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
 import torch
+import math
 from torch.distributions import Categorical
 from dataset import get_data_loader, StringHandler, print_wrapped, decode
 from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise, MaskingNoise
 import torch.optim as optim
 from losses import loss_function, flow_loss
 import os
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 from inference_helpers import sample_masking, sample_substitution, sample_discrete_flow
 from tqdm import tqdm
 import time
 import random
 import numpy as np
 import ast
+import gc
 
 torch.set_float32_matmul_precision('high')
 
@@ -96,12 +99,28 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
 
     # --- Optimizer ---
     if cfg.trainer.use_muon:
-        matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2]
-        other_params = [p for n, p in model.named_parameters() if p.dim() != 2]
+        matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2 and 'transformer.h' in n]
+        other_params = [p for n, p in model.named_parameters() if not (p.dim() == 2 and 'transformer.h' in n)]
         optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr)
-        optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr)
+        optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr*0.1)
     else:
-        optimizer = optim.AdamW(model.parameters(), lr=cfg.trainer.lr)
+        optimizer = optim.AdamW(model.parameters(), lr=cfg.trainer.lr*0.1)
+
+    # --- LR Schedule: linear warmup + cosine decay ---
+    grad_accum_steps_sched = getattr(cfg.trainer, 'grad_accum_steps', 8)
+    total_optimizer_steps = max(1, (cfg.trainer.n_epochs * len(train_dataloader)) // grad_accum_steps_sched)
+    warmup_steps = max(1, total_optimizer_steps // 40)  # 2.5% warmup
+    min_lr_ratio = 0.05
+
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return (step + 1) / warmup_steps
+        progress = (step - warmup_steps) / max(1, total_optimizer_steps - warmup_steps)
+        return min_lr_ratio + (1.0 - min_lr_ratio) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    if cfg.trainer.use_muon:
+        scheduler_matrices = torch.optim.lr_scheduler.LambdaLR(optimizer_matrices, lr_lambda)
 
     sampler = None
     if cfg.trainer.prob_sampling:
@@ -112,43 +131,65 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     start_time = time.time()
     final_loss = 0
 
+    grad_accum_steps = getattr(cfg.trainer, 'grad_accum_steps', 8)
+    autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+
+    # Write val_loss CSV header
+    if cfg.log_run:
+        with open(val_loss_log_path, 'w') as f:
+            f.write('epoch,val_loss\n')
+
     for epoch in range(cfg.trainer.n_epochs):
         progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{cfg.trainer.n_epochs}")
         for i, batch in enumerate(progress_bar):
+
+            # GC management (Python's GC causes random latency spikes)
+            if i == 0 and epoch == 0:
+                gc.collect()
+                gc.freeze()
+                gc.disable()
+            elif (i + 1) % 5000 == 0:
+                gc.collect()
+
             batch = batch.to(device)
-            loss = flow_loss(model, batch, noise, sh, sampling_eps=cfg.noise.sigma_min, sampler=sampler)
-            final_loss = loss.item()
+            with autocast_ctx:
+                loss = flow_loss(model, batch, noise, sh, sampling_eps=cfg.noise.sigma_min, sampler=sampler)
+                loss = loss / grad_accum_steps
+            final_loss = loss.item() * grad_accum_steps
 
             if cfg.log_run:
                 with open(loss_log_path, 'a') as f:
                     f.write(f'{epoch},{i},{final_loss}\n')
-            
-            optimizer.zero_grad(set_to_none=True)
-            if cfg.trainer.use_muon:
-                optimizer_matrices.zero_grad(set_to_none=True)
-            
 
             loss.backward()
-            optimizer.step()
-            if cfg.trainer.use_muon:
-                optimizer_matrices.step()
 
-            if i % 1000 == 0 and i > 0 and cfg.log_run:
-                model.eval()  # Set the model to evaluation mode
-                total_val_loss = 0
-                with torch.no_grad(): # Ensure no gradients are calculated
-                    for batch in val_dataloader:
-                        batch = batch.to(device)
-                        # The same loss function you use for training
-                        loss = flow_loss(model, batch, noise, sh, sampler=None) 
-                        total_val_loss += loss.item()
+            if (i + 1) % grad_accum_steps == 0 or (i + 1) == len(train_dataloader):
+                optimizer.step()
+                if cfg.trainer.use_muon:
+                    optimizer_matrices.step()
+                scheduler.step()
+                if cfg.trainer.use_muon:
+                    scheduler_matrices.step()
+                optimizer.zero_grad(set_to_none=True)
+                if cfg.trainer.use_muon:
+                    optimizer_matrices.zero_grad(set_to_none=True)
 
-                avg_val_loss = total_val_loss / len(val_dataloader)
+        if cfg.log_run:
+            model.eval()  # Set the model to evaluation mode
+            total_val_loss = 0
+            with torch.no_grad(): # Ensure no gradients are calculated
+                for batch in val_dataloader:
+                    batch = batch.to(device)
+                    # The same loss function you use for training
+                    loss = flow_loss(model, batch, noise, sh, sampler=None) 
+                    total_val_loss += loss.item()
 
-                with open(val_loss_log_path, 'a') as f:
-                    f.write(f'{epoch},{i},{avg_val_loss}\n')
+            avg_val_loss = total_val_loss / len(val_dataloader)
 
-                model.train() # Set the model back to training mode
+            with open(val_loss_log_path, 'a') as f:
+                f.write(f'{epoch},{avg_val_loss:.6f}\n')
+
+            model.train() # Set the model back to training mode
 
         if cfg.save_model:
             state_dict = model._orig_mod.state_dict() if hasattr(model, '_orig_mod') else model.state_dict()

@@ -14,13 +14,13 @@ save_model: True
 # Data loading settings
 data:
   dir: './shakespeare_char/'
-  batch_size: 256
+  batch_size: 512
   context_length: 256
 
 # Model architecture
 model:
-  n_layer: 3
-  n_head: 2
+  n_layer: 4
+  n_head: 4
   n_embd: 384
   cond_dim: 64
   dropout: 0.1
@@ -36,7 +36,7 @@ noise:
 
 # Trainer settings
 trainer:
-  n_epochs: 8
+  n_epochs: 5
   lr: 1.0e-3
   # Use Muon optimizer for weight matrices
   use_muon: True
