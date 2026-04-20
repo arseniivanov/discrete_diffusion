@@ -25,7 +25,6 @@ def set_seed(seed: int):
         torch.cuda.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True, warn_only=True)
 
 @hydra.main(version_base=None, config_path="conf", config_name="base_config")
 def main(cfg: DictConfig) -> None:

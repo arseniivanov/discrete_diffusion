@@ -121,6 +121,7 @@ if args.runs:
     except ValueError:
         print(f"Error: Invalid --runs argument. Must be comma-separated integers.")
         exit()
+        print("\nCould not automatically determine the best run.")
 
 if not all_log_files:
     print("\nNo log files found after applying filters. Exiting.")
@@ -177,7 +178,7 @@ for log_file in all_log_files:
         print(f"Could not process run in folder {run_folder.name}: {e}")
 
 # --- Finalize and Show Plot ---
-if all_log_files:
+if all_log_files and False:
     ax.set_title('Training & Validation Loss Comparison', fontsize=18, pad=20)
     ax.set_xlabel('Global Training Step', fontsize=14)
     ax.set_ylabel('Loss', fontsize=14)
@@ -221,7 +222,6 @@ if args.best:
         print("\nDisplaying full summary:\n")
         print(best_run_info["summary"])
     else:
-        print("\nCould not automatically determine the best run.")
         print("This can happen if no 'Final Loss:' line was found or parsable in the summary files.")
 
     print("\n" + "="*80)

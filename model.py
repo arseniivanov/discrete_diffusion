@@ -37,8 +37,8 @@ def get_norm(config):
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024
-    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    block_size: int = 2048
+    vocab_size: int = 32768 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
@@ -47,6 +47,7 @@ class GPTConfig:
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     timestep_embedding: bool = True
     norm: str = "ln"
+    mlp: str = "mlp"
 
     # GatedDeltaNet settings (replaces KDA)
     use_gated_delta: bool = False
@@ -191,7 +192,10 @@ class DDiTBlock(nn.Module):
             self.attn = SelfAttention(config)
             
         self.ln_2 = get_norm(config)
-        self.mlp = MLP(config)
+        if config.mlp == "mlp":
+            self.mlp = MLP(config)
+        else:
+            self.mlp = SwiGLU(config)
         self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
         self.adaLN_modulation.weight.data.zero_()
         self.adaLN_modulation.bias.data.zero_()
