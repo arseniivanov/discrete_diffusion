@@ -45,7 +45,7 @@ noise:
 # Trainer settings
 trainer:
   n_epochs: 2
-  lr: 3.0e-3
+  lr: 4.0e-3
   # Use Muon optimizer for weight matrices
   use_muon: True
   # Use data distribution for sampling
