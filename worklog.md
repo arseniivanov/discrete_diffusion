@@ -113,5 +113,24 @@
 
 ---
 
-**Current best: val_loss=0.9152**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe)
+## Exp 18: Register tokens (n=4) — ✓ COMMITTED (val=0.9130, -0.0022)
+- Prepend 4 learnable register tokens to the sequence, strip before output; gives attention heads a "global context highway"
+- Text still shows some "thou" repetition but no worse than previous best
+- Run: outputs/shakespeare_diffusion_base/2026-04-20_21-40-38
+- Text:
+  ```
+  hou, hast thou hast thou not the love that thou have with thee that would have seen thee to see the name
+  on this would be thou art thought of thee thou art thought thy ears thou wast thou not thyus aut what
+  thou camest thou titter,
+  As thou letters that babe none in thee.
+
+  HOLBEENTS:
+  Then,
+  I have not with the wars of thy persont:
+  I will we do be so much and that comes here will  tak
+  ```
+
+---
+
+**Current best: val_loss=0.9130**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **4 register tokens**

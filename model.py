@@ -273,9 +273,12 @@ class GPT(nn.Module):
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
         ))
-        # RoPE frequencies: not a parameter, just a precomputed buffer
+        # Register tokens: prepended to the sequence, stripped before output
+        self.n_registers = 4
+        self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
+        # RoPE frequencies: extra slots for register token positions
         head_dim = config.n_embd // config.n_head
-        self.register_buffer('freqs_cis', precompute_freqs_cis(head_dim, config.block_size))
+        self.register_buffer('freqs_cis', precompute_freqs_cis(head_dim, config.block_size + self.n_registers))
         self.lm_head = DDitFinalLayer(config)
 
         # init all weights
@@ -306,14 +309,17 @@ class GPT(nn.Module):
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
 
         tok_emb = self.transformer.wte(idx)  # (b, t, n_embd)
-        x = self.transformer.drop(tok_emb)
-        freqs_cis = self.freqs_cis[:t]       # (t, head_dim//2) complex, on same device
+        reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
+        x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
+        x = self.transformer.drop(x)
+        n_reg = self.n_registers
+        freqs_cis = self.freqs_cis[:n_reg + t]
         for block in self.transformer.h:
             x = block(x, c, freqs_cis)
+        x = x[:, n_reg:]  # strip registers before output
         x = self.transformer.ln_f(x)
 
-        # inference-time mini-optimization: only forward the lm_head on the very last position
-        x = self.lm_head(x, c) # note: using list [-1] to preserve the time dim
+        x = self.lm_head(x, c)
         x = torch.scatter(x, -1, idx[..., None], torch.zeros_like(x[..., :1]))
 
         return x
