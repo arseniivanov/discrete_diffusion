@@ -273,6 +273,9 @@ class GPT(nn.Module):
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
         ))
+        # Depthwise conv over token embeddings to capture local char patterns before attention
+        self.local_conv = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
+                                    groups=config.n_embd, bias=config.bias)
         # Register tokens: prepended to the sequence, stripped before output
         self.n_registers = 8
         self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
@@ -309,6 +312,7 @@ class GPT(nn.Module):
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
 
         tok_emb = self.transformer.wte(idx)  # (b, t, n_embd)
+        tok_emb = tok_emb + self.local_conv(tok_emb.transpose(1, 2)).transpose(1, 2)
         reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
         x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
         x = self.transformer.drop(x)
