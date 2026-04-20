@@ -83,5 +83,11 @@
 
 ---
 
-**Current best: val_loss=0.9671**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=3e-3, cosine masking noise, Muon on all non-embedding 2D matrices
+## Exp 15: lr=4e-3 — ✓ COMMITTED (val=0.9576, -0.0095)
+- Improvement accelerating; Muon tolerates higher LR well
+- Run: outputs/shakespeare_diffusion_base/2026-04-20_14-12-59
+
+---
+
+**Current best: val_loss=0.9576**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices
