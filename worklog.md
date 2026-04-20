@@ -39,3 +39,18 @@
   ```
 
 ---
+
+## Experiment 3: cond_dim 64→128 ✓ (COMMITTED)
+- **Hypothesis**: cond_dim=64 bottlenecks adaLN conditioning (64→2304 projection per block); doubling to 128 gives richer modulation
+- **Change**: `model.cond_dim: 128` in base_config.yaml
+- **Val Loss**: 1.0098 (IMPROVED from 1.0105)
+- **Train Loss**: 0.8053
+- **Run dir**: outputs/shakespeare_diffusion_base/2026-04-20_11-15-33
+- **Text sample**:
+  ```
+  the graces,  and come the worder, and for the of the name of your gordeness me to beseems to were were lord;
+  And sof the for the come that your your gods
+  You hear you are come you, you good for your good you, for et one to me you well you do well well, I s
+  ```
+
+---
