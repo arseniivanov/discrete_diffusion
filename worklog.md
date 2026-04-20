@@ -69,5 +69,12 @@
 
 ---
 
-**Current best: val_loss=0.9711**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=2e-3, cosine masking noise, Muon on all 2D matrices
+## Exp 13: Muon excl. embeddings (wte, wpe) — ✓ COMMITTED (val=0.9709, -0.0002)
+- Exclude wte/wpe from Muon to fix embedding distortion; val improves marginally
+- Text still shows "your" repetition (was present before Muon extension too)
+- Run: outputs/shakespeare_diffusion_base/2026-04-20_13-50-57
+
+---
+
+**Current best: val_loss=0.9709**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=2e-3, cosine masking noise, Muon on all non-embedding 2D matrices
