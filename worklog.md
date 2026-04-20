@@ -144,5 +144,22 @@
 
 ---
 
-**Current best: val_loss=0.9098**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**
+## Exp 20: Local depthwise conv on token embeddings — ✓ COMMITTED (val=0.9050, -0.0048)
+- Kernel-3 depthwise conv (residual) over tok_emb before blocks; captures char-level local structure (word patterns)
+- Text quality notably improved: character names, less repetition
+- Run: outputs/shakespeare_diffusion_base/2026-04-20_22-35-16
+- Text:
+  ```
+   and tell them in the worst of them.
+  SICINIUS:
+  Not stand teem that they give thee to them to them.
+  Second Servant:
+  Worthly the fairers, are not the gasses. Let them makes; and when they have been toes to hear,
+  that they not in the loss, they sreed mothers, that they more words than that you have but that
+  the east of your father, You woull have  you not when you put upon this  han
+  ```
+
+---
+
+**Current best: val_loss=0.9050**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **local depthwise conv (k=3)**
