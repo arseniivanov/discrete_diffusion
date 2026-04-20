@@ -3,7 +3,7 @@
 ## Baseline (default config)
 - **Val Loss (epoch 1)**: 1.0268
 - **Train Loss (final)**: 0.8674
-- **Config**: n_layer=3, n_head=2, n_embd=384, masking cosine noise, Muon+AdamW lr=1e-3, timestep_embedding=False
+- **Config**: n_layer=3, n_head=2, n_embd=384, masking cosine noise, Muon+AdamW lr=1e-3, timestep_embedding=False, cond_dim=64
 - **Text sample**:
   ```
   you art to more hearts, and not you good  give, and you have you,
@@ -18,16 +18,15 @@
 ## Experiment 1: Cosine LR warmup (FAILED — reverted)
 - **Hypothesis**: 5% linear warmup + cosine decay to 0.1×lr would improve convergence
 - **Val Loss**: 1.1594 (WORSE)
-- **Train Loss**: 1.0388
 - **Verdict**: Warmup wasted early training steps; flat lr=1e-3 is well-calibrated for 2 epochs
 
 ---
 
 ## Experiment 2: Sinusoidal timestep embedding ✓ (COMMITTED)
-- **Hypothesis**: Replace simple MLPEmbedder(1→cond_dim) with TimestepEmbedder using 256-dim sinusoidal features for richer noise-level conditioning
-- **Change**: `model.timestep_embedding: True` in base_config.yaml
-- **Val Loss**: 1.0105 (IMPROVED from 1.0268)
-- **Train Loss**: 0.7836 (IMPROVED from 0.8674)
+- **Hypothesis**: Replace MLPEmbedder(1→cond_dim) with TimestepEmbedder using 256-dim sinusoidal features
+- **Change**: `model.timestep_embedding: True`
+- **Val Loss**: 1.0105 (IMPROVED -0.0163)
+- **Train Loss**: 0.7836
 - **Run dir**: outputs/shakespeare_diffusion_base/2026-04-20_11-06-16
 - **Text sample**:
   ```
@@ -41,9 +40,9 @@
 ---
 
 ## Experiment 3: cond_dim 64→128 ✓ (COMMITTED)
-- **Hypothesis**: cond_dim=64 bottlenecks adaLN conditioning (64→2304 projection per block); doubling to 128 gives richer modulation
-- **Change**: `model.cond_dim: 128` in base_config.yaml
-- **Val Loss**: 1.0098 (IMPROVED from 1.0105)
+- **Hypothesis**: cond_dim=64 bottlenecks adaLN conditioning per block; doubling gives richer modulation
+- **Change**: `model.cond_dim: 128`
+- **Val Loss**: 1.0098 (IMPROVED -0.0007)
 - **Train Loss**: 0.8053
 - **Run dir**: outputs/shakespeare_diffusion_base/2026-04-20_11-15-33
 - **Text sample**:
@@ -51,6 +50,35 @@
   the graces,  and come the worder, and for the of the name of your gordeness me to beseems to were were lord;
   And sof the for the come that your your gods
   You hear you are come you, you good for your good you, for et one to me you well you do well well, I s
+  ```
+
+---
+
+## Experiment 4: Linear noise schedule (FAILED — reverted)
+- **Hypothesis**: Linear schedule gives uniform loss weighting vs cosine weighting high-noise steps more
+- **Val Loss**: 1.0697 (WORSE)
+- **Verdict**: Cosine weighting of high-noise timesteps is beneficial for this task
+
+---
+
+## Experiment 5: Gradient clipping max_norm=1.0 (FAILED — reverted)
+- **Hypothesis**: Score entropy loss produces large gradients; clipping would stabilize training
+- **Val Loss**: 1.0103 (WORSE)
+- **Verdict**: Training is already stable without clipping
+
+---
+
+## Experiment 6: lr 1e-3→2e-3 ✓ (COMMITTED)
+- **Hypothesis**: With better conditioning, the model can tolerate a higher LR and converge faster in 2 epochs
+- **Change**: `trainer.lr: 2.0e-3`
+- **Val Loss**: 0.9931 (IMPROVED -0.0167, breaks below 1.0)
+- **Train Loss**: 0.7822
+- **Run dir**: outputs/shakespeare_diffusion_base/2026-04-20_11-38-36
+- **Text sample**:
+  ```
+  olt arest not, for then, not that you not not, I see thou you do me, do you comest dost thou that you, I am not were you;
+  If there not not you do well do not you that we have  you, for the take you have not me:
+  If you more you do you do we not you do you h
   ```
 
 ---
