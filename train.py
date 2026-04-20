@@ -95,8 +95,8 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
 
     # --- Optimizer ---
     if cfg.trainer.use_muon:
-        matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2 and 'transformer.h' in n]
-        other_params = [p for n, p in model.named_parameters() if not (p.dim() == 2 and 'transformer.h' in n)]
+        matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2]
+        other_params = [p for n, p in model.named_parameters() if p.dim() != 2]
         optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr)
         optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr)
     else:

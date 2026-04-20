@@ -58,5 +58,16 @@
 
 ---
 
-**Current best: val_loss=0.9789**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=2e-3, cosine masking noise
+## Exp 11: dropout=0.05 — FAILED (val=0.9865)
+- Dropout reduces effective learning capacity in 2-epoch training
+
+## Exp 12: Muon on all 2D matrices — ✓ COMMITTED (val=0.9711, -0.0078)
+- Extend Muon from transformer.h only → all 2D weight matrices (sigma_map, wpe, wte, lm_head)
+- Val loss improved but text quality degraded (repetitive "thou hast" loop)
+- Hypothesis: wte/wpe with Muon distorts embedding space
+- Run: outputs/shakespeare_diffusion_base/2026-04-20_13-40-09
+
+---
+
+**Current best: val_loss=0.9711**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=2e-3, cosine masking noise, Muon on all 2D matrices
