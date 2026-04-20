@@ -7,6 +7,21 @@ from dataclasses import dataclass
 import abc
 from fla.layers.gated_deltanet import GatedDeltaNet
 
+
+def precompute_freqs_cis(head_dim: int, max_seq_len: int, theta: float = 10000.0) -> torch.Tensor:
+    freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
+    t = torch.arange(max_seq_len)
+    freqs = torch.outer(t, freqs)  # (max_seq_len, head_dim//2)
+    return torch.polar(torch.ones_like(freqs), freqs)  # complex64
+
+
+def apply_rotary_emb(q: torch.Tensor, k: torch.Tensor, freqs_cis: torch.Tensor):
+    # q, k: (B, n_head, T, head_dim); freqs_cis: (T, head_dim//2) complex
+    def rotate(x: torch.Tensor) -> torch.Tensor:
+        x_c = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+        return torch.view_as_real(x_c * freqs_cis).flatten(-2).type_as(x)
+    return rotate(q), rotate(k)
+
 @dataclass
 class GPTConfig:
     block_size: int = 1024
@@ -90,28 +105,26 @@ class SelfAttention(nn.Module):
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
 
-    def forward(self, x):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+    def forward(self, x, freqs_cis: torch.Tensor):
+        B, T, C = x.size()
 
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        head_dim = C // self.n_head
+        k = k.view(B, T, self.n_head, head_dim).transpose(1, 2)  # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, head_dim).transpose(1, 2)  # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, head_dim).transpose(1, 2)  # (B, nh, T, hs)
 
-        # self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        q, k = apply_rotary_emb(q, k, freqs_cis)
+
         if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=False)
         else:
-            # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
-            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+            y = att @ v
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
 
-        # output projection
         y = self.resid_dropout(self.c_proj(y))
         return y
 
@@ -149,21 +162,22 @@ class DDiTBlock(nn.Module):
         self.adaLN_modulation.weight.data.zero_()
         self.adaLN_modulation.bias.data.zero_()
 
-    def forward(self, x, c):
+    def forward(self, x, c, freqs_cis: torch.Tensor):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c)[:, None].chunk(6, dim=2)
-        
-        # Self-attention block
+
         x_skip = x
         x = modulate(self.ln_1(x), shift_msa, scale_msa)
-        x = self.attn(x)
-        x = gate_msa * x + x_skip  # Residual connection with gating
-        
-        # MLP block
+        if isinstance(self.attn, SelfAttention):
+            x = self.attn(x, freqs_cis)
+        else:
+            x = self.attn(x)
+        x = gate_msa * x + x_skip
+
         x_skip = x
         x = modulate(self.ln_2(x), shift_mlp, scale_mlp)
         x = self.mlp(x)
         x = gate_mlp * x + x_skip
-        
+
         return x
 
 class DDitFinalLayer(nn.Module):
@@ -255,11 +269,13 @@ class GPT(nn.Module):
             self.sigma_map = MLPEmbedder(config.cond_dim)
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
         ))
+        # RoPE frequencies: not a parameter, just a precomputed buffer
+        head_dim = config.n_embd // config.n_head
+        self.register_buffer('freqs_cis', precompute_freqs_cis(head_dim, config.block_size))
         self.lm_head = DDitFinalLayer(config)
 
         # init all weights
@@ -272,17 +288,8 @@ class GPT(nn.Module):
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 
-    def get_num_params(self, non_embedding=True):
-        """
-        Return the number of parameters in the model.
-        For non-embedding count (default), the position embeddings get subtracted.
-        The token embeddings would too, except due to the parameter sharing these
-        params are actually used as weights in the final layer, so we include them.
-        """
-        n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
-            n_params -= self.transformer.wpe.weight.numel()
-        return n_params
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -294,18 +301,15 @@ class GPT(nn.Module):
 
     def forward(self, idx, sigma):
         sigma = sigma.reshape(-1)
-        device = idx.device
         b, t = idx.size()
         c = F.silu(self.sigma_map(sigma))
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
-        # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        tok_emb = self.transformer.wte(idx)  # (b, t, n_embd)
+        x = self.transformer.drop(tok_emb)
+        freqs_cis = self.freqs_cis[:t]       # (t, head_dim//2) complex, on same device
         for block in self.transformer.h:
-            x = block(x, c)
+            x = block(x, c, freqs_cis)
         x = self.transformer.ln_f(x)
 
         # inference-time mini-optimization: only forward the lm_head on the very last position
