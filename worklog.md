@@ -76,5 +76,12 @@
 
 ---
 
-**Current best: val_loss=0.9709**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=2e-3, cosine masking noise, Muon on all non-embedding 2D matrices
+## Exp 14: lr=3e-3 with context=384 — ✓ COMMITTED (val=0.9671, -0.0038)
+- With larger batch token count (196K vs 131K), gradients are more stable → lr=3e-3 now works
+- Text quality continues to be repetitive (inference issue, separate from val_loss)
+- Run: outputs/shakespeare_diffusion_base/2026-04-20_14-02-07
+
+---
+
+**Current best: val_loss=0.9671**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=3e-3, cosine masking noise, Muon on all non-embedding 2D matrices
