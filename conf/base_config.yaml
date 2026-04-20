@@ -21,7 +21,7 @@ model:
   cond_dim: 64
   dropout: 0.0
   bias: False
-  timestep_embedding: False
+  timestep_embedding: True
   use_gated_delta: false
   gated_delta_layers: [0]    # Replace layers 0 
   
