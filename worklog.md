@@ -74,6 +74,41 @@
 - **Val Loss**: 0.9931 (IMPROVED -0.0167, breaks below 1.0)
 - **Train Loss**: 0.7822
 - **Run dir**: outputs/shakespeare_diffusion_base/2026-04-20_11-38-36
+
+---
+
+## Experiment 7: lr=3e-3 (FAILED — reverted)
+- **Hypothesis**: lr=2e-3 worked well; lr=3e-3 might push further
+- **Val Loss**: 1.0004 (WORSE — overshot)
+- **Verdict**: lr=2e-3 is the sweet spot
+
+---
+
+## Experiment 8: bias=True ✓ (COMMITTED)
+- **Hypothesis**: Adding bias to Linear/LayerNorm gives more expressivity for adaLN conditioning
+- **Change**: `model.bias: True`
+- **Val Loss**: 0.9872 (IMPROVED -0.0059)
+- **Train Loss**: 0.8000
+- **Run dir**: outputs/shakespeare_diffusion_base/2026-04-20_11-54-27
+- **Text sample**:
+  ```
+  re:
+  Wver were it were, and of the line of thy word
+  Ah, that in these mine of thy have thy lord,
+  To bear thee thee to the word  and for me preence:
+  I will be not your horser me more to your lord,
+  Too mor for my lord,
+  And to before when you have to being.
+  ```
+
+---
+
+## Experiment 6: lr 1e-3→2e-3 ✓ (COMMITTED)
+- **Hypothesis**: With better conditioning, the model can tolerate a higher LR and converge faster in 2 epochs
+- **Change**: `trainer.lr: 2.0e-3`
+- **Val Loss**: 0.9931 (IMPROVED -0.0167, breaks below 1.0)
+- **Train Loss**: 0.7822
+- **Run dir**: outputs/shakespeare_diffusion_base/2026-04-20_11-38-36
 - **Text sample**:
   ```
   olt arest not, for then, not that you not not, I see thou you do me, do you comest dost thou that you, I am not were you;
