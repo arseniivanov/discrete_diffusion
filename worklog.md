@@ -87,7 +87,31 @@
 - Improvement accelerating; Muon tolerates higher LR well
 - Run: outputs/shakespeare_diffusion_base/2026-04-20_14-12-59
 
+## Exp 16: SwiGLU MLP (hidden=8/3*n_embd=1024) — FAILED (val=0.9724)
+- Replaced GELU MLP with SwiGLU; hidden dim dropped 1536→1024 hurt intermediate capacity
+- Same param count but less compute; 2 epochs not enough for gate to learn
+
 ---
 
-**Current best: val_loss=0.9576**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices
+## Exp 17: RoPE positional embeddings — ✓ COMMITTED (val=0.9152, **-0.0424**)
+- Replaced learned wpe with RoPE (precomputed sinusoidal freqs applied to Q,K in attention)
+- Removes wpe from Muon entirely; relative position encoding improves attention quality
+- Epoch 1: 0.9410 → Epoch 2: 0.9152
+- Run: outputs/shakespeare_diffusion_base/2026-04-20_14-45-54
+- Text:
+  ```
+   have your yourself,
+  That respice of your you and your love you not your love you do your lords, you dry not you have you to you;
+  For the come of you we come to your lords,
+  You are you take you, and the your good your lords
+  You are that that you have of your lords
+  Are your consent with your corssel
+  Your wortune your louds
+  To your fhese your please you hf yout
+  I should make your con
+  ```
+
+---
+
+**Current best: val_loss=0.9152**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe)
