@@ -196,5 +196,22 @@
 
 ---
 
-**Current best: val_loss=0.8919**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **local depthwise conv (k=3) at input + after each block (full sequence)**
+## Exp 23: Stacked input conv (two k=3 depthwise, GELU between) — ✓ COMMITTED (val=0.8886, -0.0033)
+- Add second k=3 depthwise conv on top of first: tok_emb += local_conv2(gelu(tok_emb)); effective RF=5 with nonlinearity
+- More expressive character-level feature extraction at input
+- Run: outputs/shakespeare_diffusion_base/2026-04-21_12-46-10
+- Text:
+  ```
+   leave to  ome thee gone.
+  My lorge, that have come home to set the worst.
+  QUEEN ELIZABETH:
+  What shall we have thee? and tell thee, that have done to thee.
+  QQUEEN MARGARET:
+  Ay, that is thou donest thou not have no,
+  Ant that thou dost yoke of mine.
+  ```
+
+---
+
+**Current best: val_loss=0.8886**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **per-block depthwise conv k=3**

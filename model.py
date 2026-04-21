@@ -273,9 +273,11 @@ class GPT(nn.Module):
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
         ))
-        # Depthwise conv over token embeddings to capture local char patterns before attention
+        # Two-layer depthwise input conv: k=3 twice = RF 5 with nonlinearity between
         self.local_conv = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
                                     groups=config.n_embd, bias=config.bias)
+        self.local_conv2 = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
+                                     groups=config.n_embd, bias=config.bias)
         # Per-block depthwise convs applied after each transformer block (token positions only)
         self.block_convs = nn.ModuleList([
             nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
@@ -319,6 +321,7 @@ class GPT(nn.Module):
 
         tok_emb = self.transformer.wte(idx)  # (b, t, n_embd)
         tok_emb = tok_emb + self.local_conv(tok_emb.transpose(1, 2)).transpose(1, 2)
+        tok_emb = tok_emb + self.local_conv2(F.gelu(tok_emb).transpose(1, 2)).transpose(1, 2)
         reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
         x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
         x = self.transformer.drop(x)
