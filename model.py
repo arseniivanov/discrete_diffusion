@@ -106,6 +106,10 @@ class SelfAttention(nn.Module):
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         # ALiBi locality slopes: learnable, one per head; positive = prefer nearby tokens
         self.ali_slopes = nn.Parameter(torch.tensor([0.1, 0.05]))
+        # QK-Norm: normalize Q and K per-head before attention (stabilizes logit scale)
+        head_dim = config.n_embd // config.n_head
+        self.q_norm = nn.LayerNorm(head_dim, bias=False)
+        self.k_norm = nn.LayerNorm(head_dim, bias=False)
 
     def forward(self, x, freqs_cis: torch.Tensor):
         B, T, C = x.size()
@@ -116,6 +120,8 @@ class SelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, head_dim).transpose(1, 2)  # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, head_dim).transpose(1, 2)  # (B, nh, T, hs)
 
+        q = self.q_norm(q)
+        k = self.k_norm(k)
         q, k = apply_rotary_emb(q, k, freqs_cis)
 
         # ALiBi: per-head distance penalty (encourages local attention)
