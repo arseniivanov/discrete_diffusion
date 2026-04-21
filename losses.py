@@ -176,8 +176,12 @@ def loss_function(
         loss:           scalar tensor with the loss.
     """
 
-    if t is None: # time step
-        t = (1 - sampling_eps) * torch.rand(x0.shape[0], device=x0.device) + sampling_eps
+    if t is None: # time step — antithetic pairs (t, 1-t) for balanced noise coverage
+        B = x0.shape[0]
+        half = (B + 1) // 2
+        u = torch.rand(half, device=x0.device)
+        u = torch.cat([u, 1.0 - u])[:B]
+        t = sampling_eps + (1.0 - 2.0 * sampling_eps) * u
 
     sigma_bar, sigma = noise(t)
 
