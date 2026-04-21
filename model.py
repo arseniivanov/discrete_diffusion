@@ -121,7 +121,8 @@ class SelfAttention(nn.Module):
         # ALiBi: per-head distance penalty (encourages local attention)
         pos = torch.arange(T, device=q.device, dtype=q.dtype)
         dist = (pos.unsqueeze(0) - pos.unsqueeze(1)).abs()  # (T, T)
-        ali_bias = (-dist.unsqueeze(0) * self.ali_slopes.unsqueeze(-1).unsqueeze(-1)).unsqueeze(0)  # (1, n_head, T, T)
+        slopes = self.ali_slopes.to(dtype=q.dtype)
+        ali_bias = -torch.einsum('h,ij->hij', slopes, dist).unsqueeze(0)  # (1, n_head, T, T), contiguous
 
         if self.flash:
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=ali_bias, dropout_p=self.dropout if self.training else 0, is_causal=False)
