@@ -248,7 +248,21 @@
   Is no more, there is the head of the name?
   ```
 
+## Exp 26: ALiBi einsum (bfloat16-consistent slopes) — ✓ COMMITTED (val=0.8809, -0.0009)
+- Changed ALiBi bias computation from broadcast multiply to `torch.einsum` with explicit bfloat16 cast for slopes
+- Original: float32 slopes × bfloat16 dist (mixed precision). New: slopes cast to bfloat16 first, einsum stays in bfloat16
+- Consistent dtype improves gradient signal through ALiBi slopes; also fixes non-contiguous tensor error for non-8-divisible T
+- Run: outputs/shakespeare_diffusion_base/2026-04-21_21-48-03
+- Text:
+  ```
+   let them when they have been remived them
+  to hear them that they have been their gates,
+  We make her lives to them, when they with them, they are content o' the kindred statds,
+  And theyrane one to make the noters seeming oyes,
+  And waked them eldest wakes on the bones, that they have done and their tartnes
+  ```
+
 ---
 
-**Current best: val_loss=0.8818**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (2 learnable slopes per SelfAttention)**
+**Current best: val_loss=0.8809**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**
