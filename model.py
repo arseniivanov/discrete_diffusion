@@ -326,9 +326,7 @@ class GPT(nn.Module):
         freqs_cis = self.freqs_cis[:n_reg + t]
         for i, block in enumerate(self.transformer.h):
             x = block(x, c, freqs_cis)
-            x_tok = x[:, n_reg:]
-            x_tok = x_tok + self.block_convs[i](x_tok.transpose(1, 2)).transpose(1, 2)
-            x = torch.cat([x[:, :n_reg], x_tok], dim=1)
+            x = x + self.block_convs[i](x.transpose(1, 2)).transpose(1, 2)
         x = x[:, n_reg:]  # strip registers before output
         x = self.transformer.ln_f(x)
 

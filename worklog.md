@@ -178,7 +178,23 @@
   Hath done nou to mine  for this power,
   ```
 
+## Exp 22: Simplified per-block conv (full sequence incl. registers) — ✓ COMMITTED (val=0.8919, -0.0048)
+- Remove register-stripping inside block conv loop; apply conv to full [registers+tokens] sequence
+- Cleaner code AND better val loss: simpler residual path improves gradient flow
+- Run: outputs/shakespeare_diffusion_base/2026-04-21_10-03-00
+- Text:
+  ```
+  s the lives to bear them, than they were they come to their come to them their hates of the eases: they are come to the partness of they come to have done their
+  the causes of the war, that is the pisterer, that
+  they are a hence: they have not heard, nor they hay
+  been to the sure of their measure fives of the
+  desires of the marken.'
+
+  Second Servenger:
+  Servant an enter his master. rn
+  ```
+
 ---
 
-**Current best: val_loss=0.8967**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **local depthwise conv (k=3) at input + after each block**
+**Current best: val_loss=0.8919**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **local depthwise conv (k=3) at input + after each block (full sequence)**
