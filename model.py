@@ -276,6 +276,12 @@ class GPT(nn.Module):
         # Depthwise conv over token embeddings to capture local char patterns before attention
         self.local_conv = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
                                     groups=config.n_embd, bias=config.bias)
+        # Per-block depthwise convs applied after each transformer block (token positions only)
+        self.block_convs = nn.ModuleList([
+            nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
+                      groups=config.n_embd, bias=config.bias)
+            for _ in range(config.n_layer)
+        ])
         # Register tokens: prepended to the sequence, stripped before output
         self.n_registers = 8
         self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
@@ -318,8 +324,11 @@ class GPT(nn.Module):
         x = self.transformer.drop(x)
         n_reg = self.n_registers
         freqs_cis = self.freqs_cis[:n_reg + t]
-        for block in self.transformer.h:
+        for i, block in enumerate(self.transformer.h):
             x = block(x, c, freqs_cis)
+            x_tok = x[:, n_reg:]
+            x_tok = x_tok + self.block_convs[i](x_tok.transpose(1, 2)).transpose(1, 2)
+            x = torch.cat([x[:, :n_reg], x_tok], dim=1)
         x = x[:, n_reg:]  # strip registers before output
         x = self.transformer.ln_f(x)
 
