@@ -161,5 +161,24 @@
 
 ---
 
-**Current best: val_loss=0.9050**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **local depthwise conv (k=3)**
+## Exp 21: Per-block depthwise conv (k=3 after each block) — ✓ COMMITTED (val=0.8967, -0.0083)
+- After each DDiTBlock, apply k=3 depthwise conv residually to token positions; local context at every layer
+- Big jump: text quality dramatically improved, coherent sentences and character names
+- Run: outputs/shakespeare_diffusion_base/2026-04-20_23-36-04
+- Text:
+  ```
+   leave me with your lords.
+  PAULINA:
+  I am your lord, take your lives this sum ly love.
+  MAULINA:
+  No, God, my lord, hold not yet  his face.
+  MARIANA:
+  O, come, that I would have tone of him,
+  And I have tiln the time of the world
+  Hath done nou to mine  for this power,
+  ```
+
+---
+
+**Current best: val_loss=0.8967**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **local depthwise conv (k=3) at input + after each block**
