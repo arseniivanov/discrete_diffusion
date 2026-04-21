@@ -104,6 +104,8 @@ class SelfAttention(nn.Module):
         self.dropout = config.dropout
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+        # ALiBi locality slopes: learnable, one per head; positive = prefer nearby tokens
+        self.ali_slopes = nn.Parameter(torch.tensor([0.1, 0.05]))
 
     def forward(self, x, freqs_cis: torch.Tensor):
         B, T, C = x.size()
@@ -116,10 +118,16 @@ class SelfAttention(nn.Module):
 
         q, k = apply_rotary_emb(q, k, freqs_cis)
 
+        # ALiBi: per-head distance penalty (encourages local attention)
+        pos = torch.arange(T, device=q.device, dtype=q.dtype)
+        dist = (pos.unsqueeze(0) - pos.unsqueeze(1)).abs()  # (T, T)
+        ali_bias = (-dist.unsqueeze(0) * self.ali_slopes.unsqueeze(-1).unsqueeze(-1)).unsqueeze(0)  # (1, n_head, T, T)
+
         if self.flash:
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=False)
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=ali_bias, dropout_p=self.dropout if self.training else 0, is_causal=False)
         else:
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+            att = att + ali_bias
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v
