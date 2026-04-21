@@ -278,8 +278,13 @@ class GPT(nn.Module):
                                     groups=config.n_embd, bias=config.bias)
         self.local_conv2 = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
                                      groups=config.n_embd, bias=config.bias)
-        # Per-block depthwise convs applied after each transformer block (token positions only)
+        # Per-block stacked depthwise convs: two k=3 convs with GELU between (RF=5), same as input
         self.block_convs = nn.ModuleList([
+            nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
+                      groups=config.n_embd, bias=config.bias)
+            for _ in range(config.n_layer)
+        ])
+        self.block_convs2 = nn.ModuleList([
             nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
                       groups=config.n_embd, bias=config.bias)
             for _ in range(config.n_layer)
@@ -301,6 +306,7 @@ class GPT(nn.Module):
 
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+        assert self.get_num_params()/1e6 < 6.5, f"Illegal change, you cannot increase parameter count, its a trivial measure"
 
     def get_num_params(self):
         return sum(p.numel() for p in self.parameters())
@@ -330,6 +336,7 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = block(x, c, freqs_cis)
             x = x + self.block_convs[i](x.transpose(1, 2)).transpose(1, 2)
+            x = x + self.block_convs2[i](F.gelu(x).transpose(1, 2)).transpose(1, 2)
         x = x[:, n_reg:]  # strip registers before output
         x = self.transformer.ln_f(x)
 

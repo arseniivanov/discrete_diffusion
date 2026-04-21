@@ -213,5 +213,27 @@
 
 ---
 
-**Current best: val_loss=0.8886**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **per-block depthwise conv k=3**
+## Exp 24: Stacked per-block conv (two k=3 depthwise, GELU between) — ✓ COMMITTED (val=0.8832, -0.0054)
+- Mirror the successful input conv stacking (Exp23) at every transformer block: x += block_conv2[i](gelu(x)); effective RF=5 with nonlinearity per block
+- Same pattern that worked for input conv applied to per-block convs
+- Run: outputs/shakespeare_diffusion_base/2026-04-21_*
+- Text:
+  ```
+   you, that you have pressed to be so,
+  bod,
+  To thee that house, that will you have drown'd
+  To tear the last, that you have done to yome
+  Found what I will come to your good words,
+  Aod rest touc loss, that you make me notly son.
+
+  PAULINA:
+  My heart, my lord lord,
+  I have none to your good corsession.
+  Now, good nime, son, son, what it is hence,
+  To like the noble, sor, that thou hast not
+  ```
+
+---
+
+**Current best: val_loss=0.8832**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**
