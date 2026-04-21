@@ -233,7 +233,22 @@
   To like the noble, sor, that thou hast not
   ```
 
+## Exp 25: ALiBi locality bias on top of RoPE — ✓ COMMITTED (val=0.8818, -0.0014)
+- Added 2 learnable per-head slopes (init [0.1, 0.05]) to SelfAttention; bias = -slope * |i-j| added to attention logits
+- Complements RoPE: RoPE provides directional relative encoding, ALiBi adds explicit distance penalty encouraging nearby-token attention
+- Hypothesis confirmed: for char-level text, explicit locality bias helps attention focus on word-level context
+- Run: outputs/shakespeare_diffusion_base/2026-04-21_*
+- Text:
+  ```
+   they mo love, that they have done
+  Toestand, they are not that that hath been done,
+  And then they have see them to the lines
+  Of the gates, say, they see ere they see, the streess these 
+  ins in their lives in the other gates  names, that that have they seek nut their wives, that they have they see  the mistrees of man?
+  Is no more, there is the head of the name?
+  ```
+
 ---
 
-**Current best: val_loss=0.8832**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**
+**Current best: val_loss=0.8818**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (2 learnable slopes per SelfAttention)**
