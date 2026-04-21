@@ -262,7 +262,27 @@
   And waked them eldest wakes on the bones, that they have done and their tartnes
   ```
 
+## Exp 27: Equal loss weighting (remove sigma multiplier) — FAILED (val=0.9970)
+- Changed loss from `(sigma * loss).mean()` to `loss.mean()` (equal weight to all noise levels)
+- Catastrophic regression: sigma weighting is load-bearing for the cosine masking derivation
+
+## Exp 28: RoPE theta=500 (lower base for char-level context) — FAILED (val=0.8837)
+- Hypothesis: lower base makes more frequencies active within 384-char context
+- Regression: longer-range positional info still valuable even at context=384
+
+## Exp 29: QK-Norm (LayerNorm on Q and K per-head, before RoPE) — ✓ COMMITTED (val=0.8770, -0.0039)
+- Add `nn.LayerNorm(head_dim, bias=False)` to Q and K after projection, before RoPE
+- Stabilizes attention logit scale (used in Gemma-2, Mistral Nemo); avoids logit explosion with depth
+- Run: outputs/shakespeare_diffusion_base/2026-04-21_23-23-34
+- Text:
+  ```
+  The flattering in the seats of your deeds,
+  The babe deserved with the holes of the deviles,
+  And that they were to make them in the life,
+  They have titter'd in the state of their hends then...
+  ```
+
 ---
 
-**Current best: val_loss=0.8809**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**
+**Current best: val_loss=0.8770**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**
