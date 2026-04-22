@@ -25,14 +25,16 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-e to the crown,
-And in the temper took of the child,
-With mine that have not spend we would have been them come to have thee,
-To stop them th the world and gake iron the time,
-To mave them wonder with thee aol the people,
-Which he is not seen to have you done.
-Now  sit in this land thas it will to you,
-To tave it your hands have to be your convertion
-To dear bout to past, have you
+, thy soos,thy father,
+Were thou the time, and that thou lavest.
+Hast thou on the worst of thy face,
+Thy king of thy state, thou wilt have made thee thee,
+Than in thy heart, that thou wast not be blame,
+And come for thee, that thou hast thou to me:
+It is thy love, that I will not be song to live.
 
-Training finished. Final loss: 0.6871. Val loss: 0.8434. Duration: 19m 46s
+QUKE  MARGARIT:
+But, now that he is gone to give me life;
+For this song that thou has
+
+Training finished. Final loss: 0.6829. Val loss: 0.8405. Duration: 19m 46s
