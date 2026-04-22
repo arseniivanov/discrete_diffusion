@@ -452,5 +452,86 @@
 
 ---
 
-**Current best: val_loss=0.8715**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×500 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**
+## Exp 50: sigma×200 (reduce aliasing further) — FAILED (val=0.8721)
+- Changed sigma scaling from ×500 to ×200 in TimestepEmbedder.forward
+- Epoch 0: 0.9050 (better than 0.9097), Epoch 1: 0.8721 (worse than 0.8715)
+- ×500 appears to be sweet spot: ×200 loses informative signal from mid-high-k dimensions
+- The optimal balance seems near ×500 (between too-aliased ×1000 and too-narrow ×200)
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_08-08-09
+
+## Exp 51: sigma×300 — FAILED (val=0.8728)
+- Changed sigma scaling from ×500 to ×300
+- Epoch 0: 0.9049, Epoch 1: 0.8728 (regression from 0.8715)
+- Not monotonically better at lower values: ×200=0.8721, ×300=0.8728, ×500=0.8715. Sweet spot confirmed at ×500
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_10-43-53
+
+## Exp 52: output AdaLN-style (sigma_scale × logits + sigma_out) — FAILED (val=0.8774)
+- Added sigma_scale = Linear(cond_dim, vocab_size, bias=False) with zero-init
+- Applied as: `logits = logits * (1 + sigma_scale(c)) + sigma_out(c)` (scale+shift like AdaLN)
+- 8,320 new params; zero-init gives identity initially
+- Epoch 0: 0.9070 (similar), Epoch 1: 0.8774 (large regression)
+- Multiplicative modulation of logits disrupts training (gradients scaled down or up unpredictably)
+- Additive-only (sigma_out in Exp48) is safer; multiplicative scale on logits is harmful
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_11-06-06
+
+## Exp 54: Remove outer SiLU on conditioning — ✓ COMMITTED (val=0.8711, -0.0004)
+- Changed `c = F.silu(self.sigma_map(sigma))` → `c = self.sigma_map(sigma)` in GPT.forward
+- TimestepEmbedder already applies SiLU internally (Linear(256,128)→SiLU→Linear(128,128)); the outer SiLU squashed negative components of c unnecessarily
+- Removing it gives AdaLN, sigma_in, and sigma_out a more balanced conditioning signal
+- Epoch 0: 0.9097 (similar), Epoch 1: 0.8711 (new best!); train loss 0.7454 (vs 0.7522)
+- Text quality: more coherent sentences, visible improvement
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_*
+
+## Exp 56: Remove redundant ln_f before lm_head — MARGINAL FAIL (val=0.8712)
+- Skipped `x = self.transformer.ln_f(x)` since DDitFinalLayer already has its own norm_final with AdaLN
+- Hypothesis: double normalization suppresses signal before final projection
+- Epoch 0: 0.9097, Epoch 1: 0.8712 (tied with best 0.8711 within noise; technically marginal regression)
+- The ln_f is load-bearing: block conv outputs need normalization before the AdaLN-conditioned norm_final
+- Reverted
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_*
+
+## Exp 55: Include registers in input convolutions — FAILED (val=0.8739)
+- Moved `torch.cat([reg, tok_emb])` before the input conv pair (local_conv, local_conv2)
+- Motivated by Exp22 success (block_convs on full sequence including registers)
+- Hypothesis: registers can help shape the initial conv feature extraction
+- Epoch 0: 0.9097, Epoch 1: 0.8739 (regression vs 0.8711)
+- At input stage, register tokens (near-zero init) just add noise to local_conv boundaries; reverted
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_*
+
+## Exp 53: GELU → SiLU in MLP — FAILED (val=0.8735)
+- Replaced `nn.GELU()` with `nn.SiLU()` in MLP feed-forward layers
+- SiLU (Swish) commonly outperforms GELU in modern transformers; zero param/memory cost
+- Epoch 0: 0.9097, Epoch 1: 0.8735 (regression vs 0.8715)
+- GELU remains optimal for this model; reverted
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_*
+
+## Exp 59: AdamW weight_decay=0 on non-matrix params — FAILED (val=0.8782)
+- Changed `optim.AdamW(other_params, lr=cfg.trainer.lr)` → `optim.AdamW(other_params, lr=cfg.trainer.lr, weight_decay=0)`
+- Hypothesis: WD=0.01 shrinks register tokens, sigma_in, sigma_out, LayerNorm gains — freeing them could let conditioning grow in magnitude
+- Epoch 0: 0.9059, Epoch 1: 0.8782 (regression vs 0.8711)
+- Weight decay on conditioning paths is load-bearing; reverted
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_13-47-54
+
+## Exp 60: Third per-block stacked depthwise conv (k=3) — OOM
+- Added `block_convs3` ModuleList (+4,608 params, within budget)
+- Forward: `x = x + block_convs3[i](F.gelu(x).transpose(1,2)).transpose(1,2)` after block_convs2
+- Crashed OOM — activation memory from 3 conv layers × 3 blocks × bf16 + GELU activations overflows 16GB
+- Local RF extension beyond 5 must come via dilation (same activation count) rather than stacking; reverted
+
+## Exp 61: Learnable per-head attention log-scale — OOM (x2)
+- Added `self.attn_log_scale = nn.Parameter(torch.zeros(n_head))` in SelfAttention (+2 params)
+- Forward: `q = q * self.attn_log_scale.exp().to(q.dtype).view(1,n_head,1,1)` after QK-norm+RoPE
+- Crashed OOM consistently at ~step 17/train despite trivial param count
+- Likely torch.compile specialization cost (extra graph for parameterized q scale) overflows 16GB margin
+- Memory budget is maxed; further forward-path additions not feasible; reverted
+
+## Exp 62: RoPE theta 10000→500 — ✓ COMMITTED (val=0.8710, -0.0001)
+- Changed default `theta=10000.0` to `theta=500.0` in `precompute_freqs_cis`
+- Hypothesis: for short contexts (T=392), theta=10000 gives too-slow rotation in low-freq components, poor positional discrimination
+- theta=500 gives finer angular spread across the sequence; zero memory cost (just different buffer values)
+- Epoch 0: 0.9019, Epoch 1: 0.8710 (marginal improvement; within noise but committed per protocol)
+- Text quality similar
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_14-17-00
+
+**Current best: val_loss=0.8710**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×500 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
