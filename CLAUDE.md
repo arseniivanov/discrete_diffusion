@@ -25,16 +25,14 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
- time,
-That now  he goes no more. What I have come to thee the office of this land?
+e to the crown,
+And in the temper took of the child,
+With mine that have not spend we would have been them come to have thee,
+To stop them th the world and gake iron the time,
+To mave them wonder with thee aol the people,
+Which he is not seen to have you done.
+Now  sit in this land thas it will to you,
+To tave it your hands have to be your convertion
+To dear bout to past, have you
 
-MENRMES:
-No, noon but besth. Well, my love.
-
-ERWARD:
-Why, that they are come to me to the least.
-
-A
-KINBARY:
-
-Training finished. Final loss: 0.6908. Val loss: 0.8481. Duration: 19m 46s
+Training finished. Final loss: 0.6871. Val loss: 0.8434. Duration: 19m 46s
