@@ -25,14 +25,16 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-, that to hate that done,
-To have the face of this heaven showes in the prestice of the woe of honour,
-And this worth of the waster scope to be gone,
-For that this conserved to a worserves.
-A goe cops to me to come.
+nd them the sons, and they are d and time,
+To save them more and sons of their gates
+That shall be rain aor of this death.
 
-MENENIUS:
-You swill not come with the woman's love,
-And with the hearts  of Rome horses, I come to live in him, and make me not to sheep for gave you; for that the mar
+CLARENCE:
+Come came to the worst of the worst thae to ange
+What far age hake thour hearts, of those tears,
+And there will come to make my gives:
+And yet not to make this time of war;
+The shame of the heads of the earth of hearts,
+To made the times for that the
 
-Training finished. Final loss: 0.7488. Val loss: 0.8710. Duration: 19m 46s
+Training finished. Final loss: 0.7476. Val loss: 0.8678. Duration: 19m 46s

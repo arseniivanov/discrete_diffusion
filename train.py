@@ -100,7 +100,7 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
         _emb = {'transformer.wte.weight', 'transformer.wpe.weight'}
         matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2 and n not in _emb]
         other_params = [p for n, p in model.named_parameters() if p.dim() != 2 or n in _emb]
-        optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr)
+        optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr * 2)
         optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr)
     else:
         optimizer = optim.AdamW(model.parameters(), lr=cfg.trainer.lr)

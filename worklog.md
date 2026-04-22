@@ -533,5 +533,24 @@
 - Text quality similar
 - Run: outputs/shakespeare_diffusion_base/2026-04-22_14-17-00
 
-**Current best: val_loss=0.8710**
+## Exp 63: register_tokens init zeros→randn*0.02 — FAILED (val=0.8727)
+- Changed `torch.zeros(...)` → `torch.randn(...) * 0.02` for register token init
+- Hypothesis: breaking symmetry earlier speeds specialization
+- Epoch 1: 0.8727 (regression vs 0.8710); zero init remains optimal for registers
+- Reverted
+
+## Exp 64: RoPE theta 500→200 — FAILED (val=0.8745)
+- Further reduced theta from 500 to 200
+- Hypothesis: even finer positional resolution might help
+- Epoch 1: 0.8745 (regression); theta=500 is the sweet spot (non-monotonic)
+- Reverted
+
+## Exp 65: Muon LR 2× AdamW LR — ✓ COMMITTED (val=0.8678, -0.0032)
+- Changed `optim.Muon(matrix_params, lr=cfg.trainer.lr)` → `optim.Muon(matrix_params, lr=cfg.trainer.lr * 2)` in train.py
+- Muon (orthogonalization-based) typically requires higher LR than AdamW for comparable step sizes; literature recommends ~2-5x
+- Epoch 0: 0.8940 (much better than prior ~0.903), Epoch 1: 0.8678 (new best, -0.0032)
+- Train loss 0.7476 (similar); optimization is more effective from the start
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_15-19-05
+
+**Current best: val_loss=0.8678**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×500 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
