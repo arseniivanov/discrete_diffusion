@@ -25,11 +25,17 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-:
-you art to more hearts, and not you good  give, and you have you,
-That be you, for you have for your you:
-But your your you be not the are your your your sterd,
-And lord, you do, what you you, you be you your your come, to king,
-Where to well be you you
+,
+And that fees the grave of this people,
+And take them that thou hast made the last;
+And that the voices of the first of case.
+Woull have been allowasted for that, they have been your grace,
+And  as the world to save the same,
+And thay have made you no moreow.
 
-Training finished. Final loss: 0.8674. Duration: 06m 32s
+AIFIDIUS:
+I would have you the weight of meance, my lord,
+And with me: let me come to the world:
+Then do we have  the wor
+
+Training finished. Final loss: 0.7546. Val loss: 0.8763. Duration: 20m 00s
