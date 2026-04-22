@@ -585,5 +585,11 @@
 - Flat LR was "frying" late training; cosine decay lets model settle
 - Run: outputs/shakespeare_diffusion_base/2026-04-22_18-22-14
 
-**Current best: val_loss=0.8531**
+## Exp 75: Peak Muon 3× / AdamW 2× + cosine decay — ✓ COMMITTED (val=0.8481, -0.0050)
+- Flat 3× Muon had failed (Exp66), but with cosine decay the average LR is ~0.55×peak so higher peaks become feasible
+- Increased peak LRs to Muon 3× (prev 2×), AdamW 2× (prev 1.5×); both decay to 10% of their peaks
+- Epoch 0: ~0.88, Epoch 1: 0.8481; train loss 0.6908
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_18-43-00
+
+**Current best: val_loss=0.8481**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×500 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**

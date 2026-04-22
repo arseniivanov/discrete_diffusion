@@ -25,13 +25,16 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-MENINIUS:
-There is made no more more them than the time,
-And that I have been torn'd
-upon  his to mome..
+ time,
+That now  he goes no more. What I have come to thee the office of this land?
 
-PAULINA:
-I come to thee,
-And tell me come to come.
+MENRMES:
+No, noon but besth. Well, my love.
 
-Training finished. Final loss: 0.7004. Val loss: 0.8531. Duration: 19m 46s
+ERWARD:
+Why, that they are come to me to the least.
+
+A
+KINBARY:
+
+Training finished. Final loss: 0.6908. Val loss: 0.8481. Duration: 19m 46s
