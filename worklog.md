@@ -596,5 +596,9 @@
 - Epoch 1: 0.8434; train loss 0.6871
 - Run: outputs/shakespeare_diffusion_base/2026-04-22_19-03-35
 
-**Current best: val_loss=0.8434**
+## Exp 77: Peak Muon 5× / AdamW 4× + cosine decay — ✓ COMMITTED (val=0.8405, -0.0029)
+- Epoch 1: 0.8405; train loss 0.6829
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_19-24-16
+
+**Current best: val_loss=0.8405**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×500 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
