@@ -105,6 +105,11 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     else:
         optimizer = optim.AdamW(model.parameters(), lr=cfg.trainer.lr)
 
+    total_steps = cfg.trainer.n_epochs * len(train_dataloader)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=cfg.trainer.lr * 1.5 * 0.1)
+    if cfg.trainer.use_muon:
+        scheduler_muon = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_matrices, T_max=total_steps, eta_min=cfg.trainer.lr * 2 * 0.1)
+
     sampler = None
     if cfg.trainer.prob_sampling:
         distribution = dataset.distribution.to(device)
@@ -142,6 +147,9 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             optimizer.step()
             if cfg.trainer.use_muon:
                 optimizer_matrices.step()
+            scheduler.step()
+            if cfg.trainer.use_muon:
+                scheduler_muon.step()
 
         model.eval()  # Set the model to evaluation mode
         total_val_loss = 0

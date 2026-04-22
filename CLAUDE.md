@@ -25,13 +25,13 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-ESCALUS:
-I have no more of you are, to make the monner of this hand.
+MENINIUS:
+There is made no more more them than the time,
+And that I have been torn'd
+upon  his to mome..
 
-PERDITIE:
-I know, sir, I will not come to them to be now.
+PAULINA:
+I come to thee,
+And tell me come to come.
 
-RUMIO:
-This in the more. That I have not so denied.
-
-Training finished. Final loss: 0.7440. Val loss: 0.8670. Duration: 19m 46s
+Training finished. Final loss: 0.7004. Val loss: 0.8531. Duration: 19m 46s

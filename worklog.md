@@ -572,5 +572,18 @@
 - Epoch 0: ~0.89, Epoch 1: 0.8670; train loss 0.7440
 - Run: outputs/shakespeare_diffusion_base/2026-04-22_17-20-52
 
-**Current best: val_loss=0.8670**
+## Exp 72: AdamW LR 2× — FAILED (val=0.8684)
+- Too aggressive; reverted
+
+## Exp 73: AdamW LR 1.75× — FAILED (val=0.8674)
+- Slight regression; 1.5× is optimum
+
+## Exp 74: Cosine LR decay to 10% — ✓ COMMITTED (val=0.8531, -0.0139 ⚡️)
+- Added `CosineAnnealingLR(T_max=total_steps, eta_min=peak_lr*0.1)` for both Muon and AdamW
+- Peak LRs unchanged (Muon 2×, AdamW 1.5×); decays smoothly over 2 epochs
+- Epoch 0: ~0.89, Epoch 1: 0.8531; train loss 0.7004 (much better than flat 0.7440)
+- Flat LR was "frying" late training; cosine decay lets model settle
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_18-22-14
+
+**Current best: val_loss=0.8531**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×500 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
