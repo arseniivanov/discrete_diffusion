@@ -343,7 +343,7 @@ class GPT(nn.Module):
     def forward(self, idx, sigma):
         sigma = sigma.reshape(-1)
         b, t = idx.size()
-        c = F.silu(self.sigma_map(sigma))
+        c = self.sigma_map(sigma)
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
 
         tok_emb = self.transformer.wte(idx)  # (b, t, n_embd)
