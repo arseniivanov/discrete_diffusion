@@ -100,15 +100,15 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
         _emb = {'transformer.wte.weight', 'transformer.wpe.weight'}
         matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2 and n not in _emb]
         other_params = [p for n, p in model.named_parameters() if p.dim() != 2 or n in _emb]
-        optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr * 3)
-        optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr * 2)
+        optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr * 4)
+        optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr * 3)
     else:
         optimizer = optim.AdamW(model.parameters(), lr=cfg.trainer.lr)
 
     total_steps = cfg.trainer.n_epochs * len(train_dataloader)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=cfg.trainer.lr * 2 * 0.1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=cfg.trainer.lr * 3 * 0.1)
     if cfg.trainer.use_muon:
-        scheduler_muon = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_matrices, T_max=total_steps, eta_min=cfg.trainer.lr * 3 * 0.1)
+        scheduler_muon = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_matrices, T_max=total_steps, eta_min=cfg.trainer.lr * 4 * 0.1)
 
     sampler = None
     if cfg.trainer.prob_sampling:
