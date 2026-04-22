@@ -25,17 +25,18 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-,
-And that fees the grave of this people,
-And take them that thou hast made the last;
-And that the voices of the first of case.
-Woull have been allowasted for that, they have been your grace,
-And  as the world to save the same,
-And thay have made you no moreow.
+er, I will not will be sound to the world.
 
-AIFIDIUS:
-I would have you the weight of meance, my lord,
-And with me: let me come to the world:
-Then do we have  the wor
+MERCUIIO:
+The love that says that have counted than thee;
+And that I will make the  name of the heart.
+Whice then your honourins of this heart
+To t bomes, that she gives mething that this same that I shall desposed thee for those that have done to the more.
 
-Training finished. Final loss: 0.7546. Val loss: 0.8763. Duration: 20m 00s
+HASTINGS:
+I have done home to dim in this death.
+
+LUCIO:
+Why, no, come, come  not
+
+Training finished. Final loss: 0.7542. Val loss: 0.8758. Duration: 20m 10s

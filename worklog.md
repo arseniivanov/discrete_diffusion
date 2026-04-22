@@ -391,7 +391,44 @@
 - Each change individually gave marginal regression; combined, they reinforce each other
 - Run: outputs/shakespeare_diffusion_base/2026-04-22_06-17-41
 
+## Exp 46: 2-layer MLP sigma_in (cond_dim→64→n_embd) — FAILED (val=0.8779)
+- Replaced linear sigma_in with 2-layer MLP (128→64 SiLU→384), keeping zero-init on final layer
+- Motivation: richer non-linear mapping from sigma to embedding space
+- Epoch 0: 0.9015 (worse than Exp45 0.8968), Epoch 1: 0.8779 (regression from 0.8763)
+- First MLP layer has non-zero init (std=0.02), creating non-zero output from step 1 → disrupts early training
+- Simple linear with zero-init (Exp45) is superior
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_06-39-07
+
+## Exp 47: Sigma-conditioned ALiBi slopes (per-sample) — FAILED (OOM)
+- Attempted: replace learnable scalar ALiBi slopes with sigma-conditioned slopes via `ali_slope_proj = Linear(cond_dim, n_head)`
+- OOM: (B=512, n_head=2, T=392, T=392) × 3 blocks → ~1.9GB for attention masks alone
+- Per-sample ALiBi is memory-prohibitive at B=512; batch-mean sigma≈0.5 constant would make per-sample conditioning nearly useless anyway
+- Abandoned
+
+## Exp 47b: Sigma-conditioned conv gates (additive) — FAILED (OOM)
+- Attempted: `x = x + gate(sigma) * conv(x)` where gate = Linear(cond_dim, 1, bias=False) per conv
+- OOM: backward needs to save `conv_out` (153MB each × 6 convs = ~900MB extra)
+- Multiplicative gating on large tensors is memory-prohibitive; abandoned
+- ALiBi bias re-init bug also discovered: `_init_weights` overwrote log([0.1, 0.05]) bias to zeros; fixed pattern identified (post-init loop) but not needed after abandoning
+
 ---
 
-**Current best: val_loss=0.8763**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×1000 in TimestepEmbedder**, **sigma_in input bias (zero-init)**
+## Exp 48: sigma_out direct logit bias (Linear(cond_dim, vocab_size), zero-init) — ✓ COMMITTED (val=0.8758, -0.0005)
+- Added `sigma_out = nn.Linear(cond_dim, vocab_size, bias=False)` with zero-init; applied as `logits += sigma_out(c).unsqueeze(1)` before scatter
+- Motivation: existing AdaLN conditions on sigma via shift/scale of norms; sigma_out is a direct additive bypass from sigma→logit without going through transformer activations
+- 8,320 new params (128×65). Applied before input-token scatter to maintain correct masking.
+- Epoch 0: 0.9077 (vs baseline 0.8968 — slightly worse early); Epoch 1: 0.8758 (new best!)
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_07-13-25
+- Text:
+  ```
+  er, I will not will be sound to the world.
+
+  MERCUIIO:
+  The love that says that have counted than thee;
+  And that I will make the  name of the heart.
+  ```
+
+---
+
+**Current best: val_loss=0.8758**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×1000 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**
