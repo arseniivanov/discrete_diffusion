@@ -250,7 +250,7 @@ class TimestepEmbedder(nn.Module):
         return embedding
 
     def forward(self, t):
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        t_freq = self.timestep_embedding(t * 1000, self.frequency_embedding_size)
         t_emb = self.mlp(t_freq)
         return t_emb
 
@@ -307,6 +307,8 @@ class GPT(nn.Module):
         # Register tokens: prepended to the sequence, stripped before output
         self.n_registers = 8
         self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
+        # Sigma-conditioned input bias: direct noise-level signal at embedding level (zero-init)
+        self.sigma_in = nn.Linear(config.cond_dim, config.n_embd, bias=False)
         # RoPE frequencies: extra slots for register token positions
         head_dim = config.n_embd // config.n_head
         self.register_buffer('freqs_cis', precompute_freqs_cis(head_dim, config.block_size + self.n_registers))
@@ -318,6 +320,7 @@ class GPT(nn.Module):
         for pn, p in self.named_parameters():
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+        torch.nn.init.zeros_(self.sigma_in.weight)
 
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
@@ -345,6 +348,7 @@ class GPT(nn.Module):
         tok_emb = tok_emb + self.local_conv2(F.gelu(tok_emb).transpose(1, 2)).transpose(1, 2)
         reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
         x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
+        x = x + self.sigma_in(c).unsqueeze(1)          # sigma-conditioned global bias
         x = self.transformer.drop(x)
         n_reg = self.n_registers
         freqs_cis = self.freqs_cis[:n_reg + t]

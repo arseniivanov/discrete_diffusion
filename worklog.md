@@ -284,5 +284,114 @@
 
 ---
 
-**Current best: val_loss=0.8770**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**
+**Current best after Exp29: val_loss=0.8770**
+
+---
+
+## Exp 30: Output depthwise conv on final representation — FAILED (val=0.8800)
+- Added k=3 depthwise conv residually after `ln_f` and before `lm_head`
+- Hypothesis: additional local smoothing before logits helps; in practice disrupts gradient flow to output projection
+- Run: outputs/shakespeare_diffusion_base/2026-04-21_23-46-18
+
+## Exp 31: Zero-init block convs — FAILED (val=0.8844)
+- Initialized block_convs and block_convs2 weights to zero so they start as identity
+- 2 epochs insufficient for convolutions to recover and contribute; reverted
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_00-09-16
+
+## Exp 32: Antithetic time sampling — ✓ COMMITTED (val=0.8769, -0.0001)
+- Paired (t, 1-t) noise level samples per batch: each batch sees balanced low-noise/high-noise coverage
+- Implementation: sample `u` for half the batch, concatenate `[u, 1-u]` for full batch; reduces variance of loss gradient
+- Epoch 1: 0.8997 (vs 0.9018 without), Epoch 2: 0.8769 (vs 0.8770)
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_00-29-38
+
+## Exp 33: Structural test — FAILED (val=0.8850)
+- Unknown structural change; epoch 1 = 0.9160 indicates significant disruption to early training
+- Reverted
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_00-52-22
+
+## Exp 34: V normalization (LayerNorm on values per head) — FAILED (val=0.8777)
+- Added `v_norm = nn.LayerNorm(head_dim)` applied after value projection, before attention output
+- Restricts value expressivity; marginal regression; reverted
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_01-13-38
+
+## Exp 35: lr=5e-3 — FAILED (val=0.8790)
+- Increased learning rate from 4e-3 → 5e-3
+- Epoch 1 marginally better but epoch 2 overshoots; reverted to 4e-3
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_01-37-57
+
+## Exp 36: Conv-before-attention (swap attention and conv order) — FAILED (val=0.8833)
+- Applied block convs BEFORE attention in each block (conv → attn → MLP instead of attn → MLP → conv)
+- Current attention-then-conv order is superior; likely conv features need attention-processed context
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_01-59-01
+
+## Exp 37: Pre-conv LayerNorm — FAILED (val=0.8913)
+- Added separate LayerNorms before each block conv: `x += conv(LN(x))` instead of `x += conv(x)`
+- Disrupts learning signal for convolutions; large regression; reverted
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_02-20-57
+
+## Exp 38: SwiGLU FFN (hidden=1024, param-neutral) — FAILED (val=0.8792)
+- Replaced GELU MLP (c_fc→1536→c_proj) with SwiGLU (gate_proj/up_proj→1024, c_proj→384)
+- hidden_dim=1024 keeps param count ~equal: 1,182,080 per layer vs 1,181,568
+- Epoch 1: 0.9095 (vs baseline 0.8997), Epoch 2: 0.8792 (regression vs 0.8769)
+- Same failure as Exp16: gated activations + Muon may conflict; gates need more epochs to learn
+- Also: expandable_segments:True required to avoid memory fragmentation OOM
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_03-01-50
+
+## Exp 39: n_registers 8→16 — FAILED (val=0.8775)
+- Doubled register tokens from 8 to 16 (+3072 params)
+- Hypothesis: more global context capacity, based on 4→8 improvement (-0.0032)
+- Epoch 1 worse (0.9005 vs 0.8997), Epoch 2 slightly worse (0.8775 vs 0.8769)
+- With ALiBi, registers shift all token positions by 8 more slots — no improvement in register accessibility
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_03-22-55
+
+## Exp 40: Stratified antithetic time sampling — FAILED (val=0.8787)
+- Replaced antithetic pairs with stratified strata in [0,0.5] + antithetic mirror in [0.5,1]
+- Used `torch.randperm(half)` to assign strata → each batch covers all noise levels uniformly
+- Epoch 1: 0.9047 (vs baseline 0.8997, -0.0050 worse), Epoch 2: 0.8787 (regression vs 0.8769)
+- Over-reducing gradient variance hurts Muon optimization; current antithetic pairs are optimal balance
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_03-44-19
+
+## Exp 41: Register-aware ALiBi (zero penalties for register interactions) — FAILED (val=0.8796)
+- Modified ALiBi to zero out distance penalties when either position is a register token
+- Motivation: last tokens in sequence have distance ~385+ to all registers with standard ALiBi,
+  effectively blocking them from accessing global register context
+- Implementation: `tok_tok = is_tok.unsqueeze(0) & is_tok.unsqueeze(1); dist *= tok_tok`
+- Epoch 1: 0.9039 (slightly worse than 0.8997), Epoch 2: 0.8796 (regression vs 0.8769)
+- Possible reason: locality bias on registers may be useful as inductive bias for learning
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_04-04-24
+
+## Exp 42: k=5 first conv (RF 5→7, memory-neutral) — FAILED (val=0.8819)
+- Replaced first k=3 conv (in both input stack and per-block stacks) with k=5 to extend RF from 5 to 7
+- Motivation: RF=7 captures common 6-char English words; OOM ruled out adding a 3rd layer
+- Epoch 0: 0.9003 (close to baseline 0.8997), Epoch 2: 0.8819 (regression vs 0.8769)
+- k=3 appears better than k=5: tighter locality provides sharper positional features
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_05-08-30
+
+## Exp 43: Sigma ×1000 before sinusoidal embedding — MARGINAL FAIL (val=0.8772)
+- Scaled sigma_bar by ×1000 before TimestepEmbedder sinusoidal embedding
+- Motivation: sinusoidal freqs designed for integer t∈[0,1000]; sigma_bar∈[0,1] only activates ~1/128 dimensions
+- With ×1000, dim≈85 (of 128 pairs) completes ~1 cycle over sigma range vs only dim≈0 before
+- Epoch 0: 0.8987 (vs baseline 0.8997, improvement!), Epoch 1: 0.8772 (vs 0.8769, marginal regression)
+- Better early conditioning but final result within noise of baseline; not committed
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_05-31-01
+
+## Exp 44: Sigma input bias (sigma→n_embd linear, zero-init) — MARGINAL FAIL (val=0.8770)
+- Added `sigma_in = nn.Linear(cond_dim, n_embd, bias=False)`, zero-initialized
+- Applied as global bias to full sequence: `x = x + sigma_in(c).unsqueeze(1)` (broadcast all positions)
+- Motivation: AdaLN only conditions post-LayerNorm activations; a direct sigma bias in embedding space provides complementary conditioning
+- Epoch 0: 0.9057 (worse than baseline 0.8997), Epoch 1: 0.8770 (essentially tied at 0.8769)
+- The sigma bias gets zero-initialized so starts as identity — takes time to activate
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_05-54-33
+
+## Exp 45: sigma×1000 + sigma input bias combined — ✓ COMMITTED (val=0.8763, -0.0006)
+- Combined Exp43 (sigma×1000 scaling) + Exp44 (sigma_in input bias)
+- sigma×1000 activates high-frequency sinusoidal embedding dims → better noise discrimination
+- sigma_in provides direct sigma signal at embedding level (complementary to AdaLN)
+- Together: sigma×1000 helps early training (epoch 0: 0.8968 vs 0.8997), sigma_in maintains that advantage to final (epoch 1: 0.8763)
+- Each change individually gave marginal regression; combined, they reinforce each other
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_06-17-41
+
+---
+
+**Current best: val_loss=0.8763**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×1000 in TimestepEmbedder**, **sigma_in input bias (zero-init)**
