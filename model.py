@@ -309,6 +309,8 @@ class GPT(nn.Module):
         self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
         # Sigma-conditioned input bias: direct noise-level signal at embedding level (zero-init)
         self.sigma_in = nn.Linear(config.cond_dim, config.n_embd, bias=False)
+        # Sigma-conditioned output logit bias: direct sigma→vocab shift bypassing the transformer (zero-init)
+        self.sigma_out = nn.Linear(config.cond_dim, config.vocab_size, bias=False)
         # RoPE frequencies: extra slots for register token positions
         head_dim = config.n_embd // config.n_head
         self.register_buffer('freqs_cis', precompute_freqs_cis(head_dim, config.block_size + self.n_registers))
@@ -321,6 +323,7 @@ class GPT(nn.Module):
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
         torch.nn.init.zeros_(self.sigma_in.weight)
+        torch.nn.init.zeros_(self.sigma_out.weight)
 
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
@@ -360,6 +363,7 @@ class GPT(nn.Module):
         x = self.transformer.ln_f(x)
 
         x = self.lm_head(x, c)
+        x = x + self.sigma_out(c).unsqueeze(1)  # direct sigma→logit bias (b,1,vocab) → broadcasts
         x = torch.scatter(x, -1, idx[..., None], torch.zeros_like(x[..., :1]))
 
         return x
