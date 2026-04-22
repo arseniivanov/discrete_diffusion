@@ -8,7 +8,7 @@ import abc
 from fla.layers.gated_deltanet import GatedDeltaNet
 
 
-def precompute_freqs_cis(head_dim: int, max_seq_len: int, theta: float = 10000.0) -> torch.Tensor:
+def precompute_freqs_cis(head_dim: int, max_seq_len: int, theta: float = 500.0) -> torch.Tensor:
     freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
     t = torch.arange(max_seq_len)
     freqs = torch.outer(t, freqs)  # (max_seq_len, head_dim//2)

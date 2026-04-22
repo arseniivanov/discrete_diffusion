@@ -25,19 +25,14 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-, methink, and some your people,
-That we have you to the case, that comes this your presence.
-
-BENENIU:
-Holy, sir, that you do
-Your own, sir, fare your place.
-
-MENENIU:
-You shall be gone:
-That we have you  pouraaneon, for you, sir, that you have done you.
+, that to hate that done,
+To have the face of this heaven showes in the prestice of the woe of honour,
+And this worth of the waster scope to be gone,
+For that this conserved to a worserves.
+A goe cops to me to come.
 
 MENENIUS:
-Your possers, gentlemen,, fare you, Marcius
-and us to your praye.
+You swill not come with the woman's love,
+And with the hearts  of Rome horses, I come to live in him, and make me not to sheep for gave you; for that the mar
 
-Training finished. Final loss: 0.7522. Val loss: 0.8715. Duration: 19m 58s
+Training finished. Final loss: 0.7488. Val loss: 0.8710. Duration: 19m 46s
