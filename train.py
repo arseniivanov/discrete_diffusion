@@ -1,7 +1,9 @@
+import torch
+torch.cuda.memory._set_allocator_settings('expandable_segments:True')  # prevent fragmentation OOM
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
-import torch
 from torch.distributions import Categorical
 from dataset import get_data_loader, StringHandler, print_wrapped, decode
 from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise, MaskingNoise

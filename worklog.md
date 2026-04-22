@@ -430,5 +430,27 @@
 
 ---
 
-**Current best: val_loss=0.8758**
-Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×1000 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**
+## Exp 49: sigma×1000 → sigma×500 in TimestepEmbedder — ✓ COMMITTED (val=0.8715, -0.0043)
+- Changed sigma scaling from ×1000 to ×500 in TimestepEmbedder.forward
+- Reasoning: at ×1000 with sigma∈[0,1], dimensions k<80 complete >π/2 cycles (near-aliased); at ×500, k<70 alias, freeing ~10 more dimensions for informative encoding
+- Zero new params, zero memory overhead
+- Epoch 0: 0.9097 (vs Exp48 0.9077 — slightly worse early but doesn't matter), Epoch 1: 0.8715 (big improvement!)
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_07-47-04
+- Text:
+  ```
+  , methink, and some your people,
+  That we have you to the case, that comes this your presence.
+
+  BENENIU:
+  Holy, sir, that you do
+  Your own, sir, fare your place.
+
+  MENENIUS:
+  Your possers, gentlemen,, fare you, Marcius
+  and us to your praye.
+  ```
+
+---
+
+**Current best: val_loss=0.8715**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×500 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**
