@@ -25,18 +25,19 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-er, I will not will be sound to the world.
+, methink, and some your people,
+That we have you to the case, that comes this your presence.
 
-MERCUIIO:
-The love that says that have counted than thee;
-And that I will make the  name of the heart.
-Whice then your honourins of this heart
-To t bomes, that she gives mething that this same that I shall desposed thee for those that have done to the more.
+BENENIU:
+Holy, sir, that you do
+Your own, sir, fare your place.
 
-HASTINGS:
-I have done home to dim in this death.
+MENENIU:
+You shall be gone:
+That we have you  pouraaneon, for you, sir, that you have done you.
 
-LUCIO:
-Why, no, come, come  not
+MENENIUS:
+Your possers, gentlemen,, fare you, Marcius
+and us to your praye.
 
-Training finished. Final loss: 0.7542. Val loss: 0.8758. Duration: 20m 10s
+Training finished. Final loss: 0.7522. Val loss: 0.8715. Duration: 19m 58s
