@@ -552,5 +552,25 @@
 - Train loss 0.7476 (similar); optimization is more effective from the start
 - Run: outputs/shakespeare_diffusion_base/2026-04-22_15-19-05
 
-**Current best: val_loss=0.8678**
+## Exp 66: Muon LR 3× — FAILED (val=0.8700)
+- Too aggressive; reverted
+
+## Exp 67: Muon LR 2.5× — FAILED (val=0.8686)
+- Slight regression; 2× is optimum
+
+## Exp 68: Muon LR 1.5× — FAILED (val=0.8711)
+- Too low; confirms 2× is sweet spot
+
+## Exp 69: AdamW LR 0.75× — FAILED (val=0.8689)
+- AdamW prefers higher LR, not lower; reverted
+
+## Exp 70: AdamW LR 1.25× — TIED (val=0.8678)
+- Essentially tied with best; used as stepping stone
+
+## Exp 71: AdamW LR 1.5× (with Muon 2×) — ✓ COMMITTED (val=0.8670, -0.0008)
+- Both optimizers benefit from more aggressive steps; AdamW for norms/registers/convs also needed more LR
+- Epoch 0: ~0.89, Epoch 1: 0.8670; train loss 0.7440
+- Run: outputs/shakespeare_diffusion_base/2026-04-22_17-20-52
+
+**Current best: val_loss=0.8670**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×500 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**

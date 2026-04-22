@@ -25,16 +25,13 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-nd them the sons, and they are d and time,
-To save them more and sons of their gates
-That shall be rain aor of this death.
+ESCALUS:
+I have no more of you are, to make the monner of this hand.
 
-CLARENCE:
-Come came to the worst of the worst thae to ange
-What far age hake thour hearts, of those tears,
-And there will come to make my gives:
-And yet not to make this time of war;
-The shame of the heads of the earth of hearts,
-To made the times for that the
+PERDITIE:
+I know, sir, I will not come to them to be now.
 
-Training finished. Final loss: 0.7476. Val loss: 0.8678. Duration: 19m 46s
+RUMIO:
+This in the more. That I have not so denied.
+
+Training finished. Final loss: 0.7440. Val loss: 0.8670. Duration: 19m 46s
