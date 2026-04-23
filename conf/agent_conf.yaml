@@ -1,5 +1,5 @@
 # A descriptive name for this experiment run
-run_name: "shakespeare_diffusion_muon_masking"
+run_name: "shakespeare_diffusion_agent_conf"
 
 defaults:
   - base_config
@@ -14,16 +14,16 @@ save_model: True
 # Data loading settings
 data:
   dir: './shakespeare_char/'
-  batch_size: 256
+  batch_size: 512
   context_length: 256
 
 # Model architecture
 model:
-  n_layer: 3
-  n_head: 2
+  n_layer: 4
+  n_head: 4
   n_embd: 384
   cond_dim: 64
-  dropout: 0.0
+  dropout: 0.1
   bias: False
 
 # Diffusion noise settings
@@ -36,7 +36,7 @@ noise:
 
 # Trainer settings
 trainer:
-  n_epochs: 2
+  n_epochs: 5
   lr: 1.0e-3
   # Use Muon optimizer for weight matrices
   use_muon: True

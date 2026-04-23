@@ -293,10 +293,10 @@ class GPT(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, sigma):
-        sigma = sigma.reshape(-1)
+        sigma = sigma.reshape(-1) #noise (B * L,)
         device = idx.device
-        b, t = idx.size()
-        c = F.silu(self.sigma_map(sigma))
+        b, t = idx.size() 
+        c = F.silu(self.sigma_map(sigma)) #elementwise
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
