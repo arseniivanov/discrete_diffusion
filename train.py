@@ -95,7 +95,7 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     val_loss_log_path = os.path.join(run_dir, 'val_loss_log.csv')
     summary_log_path = os.path.join(run_dir, 'summary.txt')
 
-    ema_decay = 0.999
+    ema_decay = 0.998
     ema_shadow = {}
     for n, p in model.named_parameters():
         key = n.removeprefix('_orig_mod.')
