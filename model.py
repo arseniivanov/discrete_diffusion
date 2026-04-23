@@ -151,7 +151,7 @@ def bias_add_scale(
 class DDiTBlock(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
-        self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias, elementwise_affine=False)
         
         # Select attention type
         use_gated_delta = getattr(config, 'use_gated_delta', False)
@@ -162,7 +162,7 @@ class DDiTBlock(nn.Module):
         else:
             self.attn = SelfAttention(config)
             
-        self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias, elementwise_affine=False)
         self.mlp = MLP(config)
         self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
         self.adaLN_modulation.weight.data.zero_()
