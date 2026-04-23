@@ -23,7 +23,7 @@ model:
   bias: True
   timestep_embedding: True
   use_gated_delta: false
-  gated_delta_layers: [0]    # Replace layers 0 
+  gated_delta_layers: [0]
   
   # GatedDeltaNet hyperparameters (memory-optimized)
   attn_mode: 'chunk'            # 'chunk' or 'fused_recurrent'
@@ -55,7 +55,7 @@ trainer:
 inference:
   model_path: "model_epoch_1.pth"
   run_inference: False
-  steps: 128
+  steps: 256
   eps: 1.0e-5
 
 # Hydra's setting for creating a unique output directory for each run
