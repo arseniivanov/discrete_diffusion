@@ -197,8 +197,6 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     avg_ema_val_loss = total_ema_val_loss / len(val_dataloader)
     with open(val_loss_log_path, 'a') as f:
         f.write(f'ema,{avg_ema_val_loss}\n')
-    del ema_model
-    torch.cuda.empty_cache()
 
     # --- Final Logging ---
     end_time = time.time()
@@ -214,13 +212,12 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             f.write(f"Total Runtime (seconds): {duration_sec:.2f}\n")
 
             f.write("\n\n--- Final Qualitative Sample ---\n")
-            model.eval() # Set model to evaluation mode for inference
             
             final_x = None
             if cfg.noise.type == 'masking':
-                final_x = sample_masking(model, noise, sh, cfg, device)
-            else: # Covers 'geometric' and 'loglinear'
-                final_x = sample_substitution(model, noise, sh, cfg, device, dataset)
+                final_x = sample_masking(ema_model, noise, sh, cfg, device)
+            else:
+                final_x = sample_substitution(ema_model, noise, sh, cfg, device, dataset)
             
             final_text = decode(final_x[0], sh)
             
@@ -228,6 +225,9 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
 
             print("\n--- Final Generated Text ---")
             print_wrapped(final_text, end='\n\n')
+
+    del ema_model
+    torch.cuda.empty_cache()
 
     print(f"Training finished. Final loss: {final_loss:.4f}. Duration: {duration_str}")
 
