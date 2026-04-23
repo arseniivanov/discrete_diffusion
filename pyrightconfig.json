@@ -1,0 +1,9 @@
+{
+  "venvPath": "/home/arseni/repositories/amd-kernel-competition/.pixi/envs",
+  "venv": "default",
+  "enableReachabilityAnalysis": false,
+  "extraPaths": [
+      "./amd_big_leagues/aiter",
+      "../FlyDSL/flydsl/src"
+    ]
+}
