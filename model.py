@@ -7,6 +7,18 @@ from dataclasses import dataclass
 import abc
 from fla.layers.gated_deltanet import GatedDeltaNet
 
+def precompute_freqs_cis(head_dim: int, max_seq_len: int, theta: float = 500.0) -> torch.Tensor:
+    freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
+    t = torch.arange(max_seq_len)
+    freqs = torch.outer(t, freqs)  # (max_seq_len, head_dim//2)
+    return torch.polar(torch.ones_like(freqs), freqs)  # complex64
+
+def apply_rotary_emb(q: torch.Tensor, k: torch.Tensor, freqs_cis: torch.Tensor):
+    def rotate(x: torch.Tensor) -> torch.Tensor:
+        x_c = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+        return torch.view_as_real(x_c * freqs_cis).flatten(-2).type_as(x)
+    return rotate(q), rotate(k)
+
 @dataclass
 class GPTConfig:
     block_size: int = 1024
@@ -90,15 +102,22 @@ class SelfAttention(nn.Module):
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
 
-    def forward(self, x):
+        self.head_dim = config.n_embd // config.n_head
+        self.q_norm = nn.LayerNorm(self.head_dim, bias=False)
+        self.k_norm = nn.LayerNorm(self.head_dim, bias=False)
+
+    def forward(self, x, freqs_cis: torch.Tensor):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2) # (B, nh, T, hs)
 
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+        q, k = apply_rotary_emb(q, k, freqs_cis)
         # self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
@@ -149,13 +168,13 @@ class DDiTBlock(nn.Module):
         self.adaLN_modulation.weight.data.zero_()
         self.adaLN_modulation.bias.data.zero_()
 
-    def forward(self, x, c):
+    def forward(self, x, c, freqs_cis: torch.Tensor):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c)[:, None].chunk(6, dim=2)
         
         # Self-attention block
         x_skip = x
         x = modulate(self.ln_1(x), shift_msa, scale_msa)
-        x = self.attn(x)
+        x = self.attn(x, freqs_cis)
         x = gate_msa * x + x_skip  # Residual connection with gating
         
         # MLP block
@@ -221,7 +240,7 @@ class TimestepEmbedder(nn.Module):
         return embedding
 
     def forward(self, t):
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        t_freq = self.timestep_embedding(t*500, self.frequency_embedding_size)
         t_emb = self.mlp(t_freq)
         return t_emb
 
@@ -255,13 +274,21 @@ class GPT(nn.Module):
             self.sigma_map = MLPEmbedder(config.cond_dim)
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
         ))
         self.lm_head = DDitFinalLayer(config)
 
+        self.n_registers = 8
+        self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
+        self.sigma_in = nn.Linear(config.cond_dim, config.n_embd, bias=False)
+        self.sigma_out = nn.Linear(config.cond_dim, config.vocab_size, bias=False)
+        head_dim = config.n_embd // config.n_head
+        self.register_buffer('freqs_cis', precompute_freqs_cis(head_dim, config.block_size + self.n_registers))
+        
+        torch.nn.init.zeros_(self.sigma_in.weight)
+        torch.nn.init.zeros_(self.sigma_out.weight)
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -269,7 +296,6 @@ class GPT(nn.Module):
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
-        # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 
     def get_num_params(self, non_embedding=True):
@@ -280,8 +306,6 @@ class GPT(nn.Module):
         params are actually used as weights in the final layer, so we include them.
         """
         n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
-            n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
     def _init_weights(self, module):
@@ -294,22 +318,26 @@ class GPT(nn.Module):
 
     def forward(self, idx, sigma):
         sigma = sigma.reshape(-1) #noise (B * L,)
-        device = idx.device
         b, t = idx.size() 
-        c = F.silu(self.sigma_map(sigma)) #elementwise
+        c = self.sigma_map(sigma) #elementwise
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        reg = self.register_tokens.expand(b, -1, -1)
+        x = torch.cat([reg, tok_emb], dim=1)
+        x = x + self.sigma_in(c).unsqueeze(1)
+        x = self.transformer.drop(x)
+        n_regs = self.n_registers
+        freqs_cis = self.freqs_cis[:n_regs + t]
         for block in self.transformer.h:
-            x = block(x, c)
+            x = block(x, c, freqs_cis)
+        x = x[:, n_regs:]
         x = self.transformer.ln_f(x)
 
         # inference-time mini-optimization: only forward the lm_head on the very last position
         x = self.lm_head(x, c) # note: using list [-1] to preserve the time dim
+        x = x + self.sigma_out(c).unsqueeze(1)
         x = torch.scatter(x, -1, idx[..., None], torch.zeros_like(x[..., :1]))
 
         return x
