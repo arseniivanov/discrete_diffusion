@@ -602,3 +602,166 @@
 
 **Current best: val_loss=0.8405**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon on all non-embedding 2D matrices, **RoPE** (no wpe), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm (per-head LayerNorm on Q and K)**, **antithetic time sampling**, **sigma×500 in TimestepEmbedder**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
+
+---
+
+## Exp 78: LR warmup (5% LinearLR + cosine decay) — FAILED (val=0.8408)
+- Added 5% linear warmup (1%→100% peak) before cosine decay for both Muon and AdamW
+- Muon's orthogonalization already constrains early step sizes; warmup wasted steps
+- Reverted
+- Run: outputs/shakespeare_diffusion_base/2026-04-23_*
+
+## Exp 79: Masked-position loss weighting (2× and 1.3×) — FAILED (val=1.095/0.939)
+- Weighted loss on masked positions ×2 and ×1.3; both catastrophic regression
+- Sigma weighting is load-bearing; any re-weighting disrupts the balance (same as Exp27)
+- Reverted
+
+## Exp 80: EMA (decay=0.999) for final val eval — ✓ COMMITTED (val=0.8334, -0.0071)
+- Maintain exponential moving average of all params on CPU; evaluate with EMA weights at end
+- Shadow key mapping: strip `_orig_mod.` prefix from compiled model param names
+- Fresh uncompiled GPT model loaded with EMA state dict for val eval + text generation
+- EMA smooths out training noise → better generalization estimate
+- Run: outputs/shakespeare_diffusion_base/2026-04-23_*
+
+## Exp 81: Cosine decay to 5% (instead of 10%) — FAILED (val=0.8369)
+- More aggressive end-decay; model needs the 10% floor LR to maintain learning signal
+- Reverted
+
+## Exp 82: Offset cosine noise schedule (s=0.02) — FAILED (val=0.8372)
+- alpha_t = cos((t+s)/(1+s) * pi/2); prevents alpha from hitting exact 0/1
+- Noise schedule changes are risky; the sigma weighting in loss is tightly coupled
+- Reverted
+
+## Exp 83: EMA decay 0.998 — ✓ COMMITTED (val=0.8203, -0.0131)
+- Faster EMA (tracks training more closely) gave large improvement
+- EMA decay=0.999 → 0.998: effective averaging window ~500 steps (vs ~1000)
+- 0.997: 0.8255 (too fast), 0.995: 0.8218 (too fast), 0.998 is sweet spot
+- Run: outputs/shakespeare_diffusion_base/2026-04-23_*
+
+## Exp 84: Peak LR 6×/5× — FAILED (val=0.8210)
+- Higher peak LRs with cosine decay; marginal regression vs 5×/4×
+- EMA doesn't enable higher peak LRs; 5×/4× remains optimal
+- Reverted
+
+## Exp 85: Muon momentum 0.9 — FAILED (val=0.8236)
+- Lower Muon momentum reduces orthogonalization strength; regression
+- Also tried 0.99 → 0.8320 (too high momentum overshoots)
+- Default 0.95 is optimal
+- Reverted
+
+## Exp 86: AdamW weight_decay=0.05 — FAILED (val=0.8223)
+- Reduced from default 0.1; less regularization hurts small model
+- Reverted
+
+## Exp 87: Muon weight_decay=0.05 — FAILED (val=0.8309)
+- Reduced from default 0.1; significant regression
+- WD on Muon params is load-bearing; default 0.1 is optimal
+- Reverted
+
+## Exp 88: Dilated block_conv2 (dilation=2, k=3) — FAILED (val=0.8304)
+- Expand RF from 5 to 7 per block via dilation instead of stacking (avoids OOM)
+- Wider receptive field at each layer hurts; k=3 d=1 is optimal for char-level locality
+- Reverted
+
+## Exp 89: GatedDeltaNet for layer 2 — FAILED (>6.5M params)
+- Exceeds parameter count limit; GatedDeltaNet adds too many params
+- Abandoned
+
+## Exp 90: AdamW beta2=0.98 — FAILED (val=0.8208)
+- Faster EMA in AdamW vs default beta2=0.999; marginal regression
+- Reverted
+
+## Exp 91: Sigma×400 (with EMA setup) — FAILED (val=0.8236)
+- Retested sigma scaling sweet spot with EMA; ×500 remains optimal
+- Reverted
+
+## Exp 92: Inference steps 128→256 — ✓ COMMITTED (val=0.8188, better text quality)
+- More denoising steps for iterative unmasking; text quality improved
+- 512 steps: val=0.8204 (too many steps adds noise); 256 is sweet spot
+- Run: outputs/shakespeare_diffusion_base/2026-04-23_*
+
+## Exp 93: Use EMA model for text generation — ✓ COMMITTED (val=0.8192)
+- Changed sample_masking/sampling to use ema_model instead of training model
+- Consistent with using EMA for val evaluation; text quality similar
+- Run: outputs/shakespeare_diffusion_base/2026-04-23_*
+
+## Exp 94: batch_size=384, context_length=512 — ✓ COMMITTED (val=0.8147, -0.0041)
+- Trade batch diversity for longer context: each sequence sees 33% more tokens (512 vs 384)
+- Total tokens per batch remains ~196K (384×512), so gradient signal per step is preserved
+- Longer context helps the model capture dependencies across longer Shakespeare passages
+- Train loss 0.6292 (vs 0.6842), runtime 29m 54s
+- Text quality improved: visible character names, more coherent phrasing
+- Run: outputs/shakespeare_diffusion_base/2026-04-24_*
+
+---
+
+**Current best: val_loss=0.8147**
+Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon 5×/AdamW 4× + cosine decay to 10%, **EMA (decay=0.998)** for val eval + text gen, **inference steps=256**, **RoPE** (theta=500), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm**, **antithetic time sampling**, **sigma×500**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
+
+---
+
+## Architectural Experiments (all FAILED)
+
+### Exp A1: Parallel Attn+MLP (PaLM-style) — FAILED (val=0.8379)
+- Changed serial (Attn→MLP) to parallel (Attn+MLP simultaneously, both see same input)
+- With only 3 layers, serial depth is actually needed for sufficient processing depth
+- Parallel reduces effective depth from 6 to 3, which hurts for such a shallow model
+- Reverted
+
+### Exp A2: RMSNorm instead of LayerNorm — FAILED (val=0.8227)
+- Replaced all LayerNorms with RMSNorm (no mean-centering) + optional bias
+- LayerNorm's mean-centering is load-bearing for AdaLN modulation pattern (shift/scale)
+- Reverted
+
+### Exp A3: 3× MLP + cond_dim 128→192 — FAILED (val=0.8284)
+- Reduced MLP from 4× to 3× expansion (1536→1152 hidden), widened cond_dim from 128→192
+- Freed ~376K params; wider conditioning doesn't compensate for reduced MLP capacity
+- The 4× MLP expansion is critical for model expressivity
+- Reverted
+
+### Exp A4: SE (Squeeze-Excitation) per block + 3.5× MLP — FAILED (val=0.8220)
+- Added SE block (global avg pool → FC16 → SiLU → FC384 → sigmoid scale) after each block
+- Reduced MLP from 4× to 3.5× to stay under 6.5M params
+- SE channel mixing + reduced MLP capacity = net regression
+- Reverted
+
+### Exp A5: Sandwich normalization (LN after Attn and after MLP) — FAILED (val=0.8249)
+- Added post-attention and post-MLP LayerNorms (Gemma-2 style)
+- The gate mechanism already handles scaling; sandwich LN is redundant
+- Reverted
+
+### Exp A6: Embedding scaling ×sqrt(n_embd) — FAILED (val=0.8248)
+- Scaled token embeddings by sqrt(384)≈19.6 before input convs
+- Pre-norm LayerNorm already handles scale; explicit scaling disrupts initialization
+- Reverted
+
+### Exp A7: 3-layer TimestepEmbedder (deeper sigma path) — FAILED (val=0.8226)
+- Added extra Linear→SiLU layer to sigma_map MLP; compensated with MLP 1536→1532
+- 2-layer TimestepEmbedder is sufficient; deeper path adds no useful expressivity
+- Reverted
+
+### Exp A8: Per-head RoPE theta (head0=200, head1=2000) — FAILED (val=0.8223)
+- Different positional frequency bases per head: local (200) + global (2000)
+- Unified theta=500 was already well-tuned; per-head thetas hurt coordination
+- Reverted
+
+### Exp A9: GQA + wider MLP (1536→1728) — FAILED (val=0.8232)
+- Shared K,V between 2 heads (multi-query attention); freed ~442K params for wider MLP
+- With only 2 heads, per-head K,V is important for head specialization
+- GQA works better with many heads (8+); hurts with 2 heads
+- Reverted
+
+### Exp A10: Random offset data augmentation — FAILED (val=0.8213)
+- Random shift of up to context_len//4 on each sample's starting position
+- DataLoader already shuffles; random offset is redundant noise
+- Reverted
+
+---
+
+**Analysis**: The current architecture is well-optimized for the 6.5M param budget. Every architectural change regressed because:
+1. The 4× MLP expansion is critical — can't be reduced without losing expressivity
+2. Per-head K,V matters with only 2 heads — GQA needs more heads to help
+3. Serial block depth matters with only 3 layers — parallel hurts
+4. LayerNorm's mean-centering is load-bearing for AdaLN
+5. The sigma conditioning path (2-layer + sigma_in/out) is already sufficient
+6. Positional encoding (unified RoPE theta=500 + ALiBi) is well-tuned

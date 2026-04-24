@@ -10,8 +10,8 @@ save_model: True
 # Data loading settings
 data:
   dir: './shakespeare_char/'
-  batch_size: 512
-  context_length: 384
+  batch_size: 384
+  context_length: 512
 
 # Model architecture
 model:
