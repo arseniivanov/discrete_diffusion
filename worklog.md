@@ -705,9 +705,17 @@ Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embed
 - Train loss 0.6300 (slightly higher, indicating regularization effect)
 - Run: outputs/shakespeare_diffusion_base/2026-04-24_*
 
+## Exp 97: batch_size=256, context_length=512 — ✓ COMMITTED (val=0.8107, -0.0010)
+- Smaller batch size (256) with same 512 context gives 50% more optimizer steps per epoch
+- Higher gradient noise + more frequent updates significantly improves training (loss 0.5805 vs 0.6300)
+- Total tokens per step is lower (131K vs 196K) but the increased step count more than compensates
+- Runtime 30m 30s (only ~3% slower despite 50% more steps, likely due to better memory efficiency)
+- Text quality slightly more repetitive but val_loss is primary metric
+- Run: outputs/shakespeare_diffusion_base/2026-04-24_*
+
 ---
 
-**Current best: val_loss=0.8117**
+**Current best: val_loss=0.8107**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon 5×/AdamW 4× + cosine decay to 10%, **EMA (decay=0.998)** for val eval + text gen, **inference steps=256**, **RoPE** (theta=500), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm**, **antithetic time sampling**, **sigma×500**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
 
 ---
