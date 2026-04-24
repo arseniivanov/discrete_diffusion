@@ -693,9 +693,16 @@ Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embed
 - Text quality improved: visible character names, more coherent phrasing
 - Run: outputs/shakespeare_diffusion_base/2026-04-24_*
 
+## Exp 95: Sharpen attention temperature (q × 1.2) — ✓ COMMITTED (val=0.8119, -0.0028)
+- With QK-Norm normalizing Q and K, default 1/√d flash-attention scaling yields variance=1 logits
+- Multiplying Q by 1.2 before flash attention raises effective logit variance to 1.44, sharpening softmax
+- Helps character-level model make more confident token predictions from local attention context
+- Train loss 0.6270, runtime 29m 45s
+- Run: outputs/shakespeare_diffusion_base/2026-04-24_*
+
 ---
 
-**Current best: val_loss=0.8147**
+**Current best: val_loss=0.8119**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon 5×/AdamW 4× + cosine decay to 10%, **EMA (decay=0.998)** for val eval + text gen, **inference steps=256**, **RoPE** (theta=500), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm**, **antithetic time sampling**, **sigma×500**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
 
 ---
