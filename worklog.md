@@ -700,9 +700,14 @@ Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embed
 - Train loss 0.6270, runtime 29m 45s
 - Run: outputs/shakespeare_diffusion_base/2026-04-24_*
 
+## Exp 96: Further sharpen attention temperature (q × 1.4) — ✓ COMMITTED (val=0.8117, -0.0002)
+- Continued the temperature tuning; marginal improvement suggests sweet spot is near 1.3–1.4
+- Train loss 0.6300 (slightly higher, indicating regularization effect)
+- Run: outputs/shakespeare_diffusion_base/2026-04-24_*
+
 ---
 
-**Current best: val_loss=0.8119**
+**Current best: val_loss=0.8117**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon 5×/AdamW 4× + cosine decay to 10%, **EMA (decay=0.998)** for val eval + text gen, **inference steps=256**, **RoPE** (theta=500), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm**, **antithetic time sampling**, **sigma×500**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
 
 ---
