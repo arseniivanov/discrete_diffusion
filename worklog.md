@@ -713,9 +713,16 @@ Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embed
 - Text quality slightly more repetitive but val_loss is primary metric
 - Run: outputs/shakespeare_diffusion_base/2026-04-24_*
 
+## Exp 98: batch_size=192, context_length=512 — ✓ COMMITTED (val=0.8040, -0.0067 ⚡️)
+- Further reduced batch size to 192 (100% more steps than original 384, 50% more than 256)
+- Massive validation improvement: 0.8107 → 0.8040; training loss 0.5795
+- Runtime remains 30m 27s — GPU is still underutilized at this batch size, so throughput per step improves
+- The sweet spot for batch size appears to be much smaller than previously assumed; gradient noise from small batches accelerates learning significantly
+- Run: outputs/shakespeare_diffusion_base/2026-04-24_*
+
 ---
 
-**Current best: val_loss=0.8107**
+**Current best: val_loss=0.8040**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon 5×/AdamW 4× + cosine decay to 10%, **EMA (decay=0.998)** for val eval + text gen, **inference steps=256**, **RoPE** (theta=500), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm**, **antithetic time sampling**, **sigma×500**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
 
 ---
