@@ -349,7 +349,7 @@ class GPT(nn.Module):
 
         tok_emb = self.transformer.wte(idx)  # (b, t, n_embd)
         tok_emb = tok_emb + self.local_conv(tok_emb.transpose(1, 2)).transpose(1, 2)
-        tok_emb = tok_emb + self.local_conv2(F.gelu(tok_emb).transpose(1, 2)).transpose(1, 2)
+        tok_emb = tok_emb + self.local_conv2(F.silu(tok_emb).transpose(1, 2)).transpose(1, 2)
         reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
         x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
         x = x + self.sigma_in(c).unsqueeze(1)          # sigma-conditioned global bias
@@ -359,7 +359,7 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = block(x, c, freqs_cis)
             x = x + self.block_convs[i](x.transpose(1, 2)).transpose(1, 2)
-            x = x + self.block_convs2[i](F.gelu(x).transpose(1, 2)).transpose(1, 2)
+            x = x + self.block_convs2[i](F.silu(x).transpose(1, 2)).transpose(1, 2)
         x = x[:, n_reg:]  # strip registers before output
         x = self.transformer.ln_f(x)
 
