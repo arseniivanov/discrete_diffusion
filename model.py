@@ -123,7 +123,7 @@ class SelfAttention(nn.Module):
         q = self.q_norm(q)
         k = self.k_norm(k)
         q, k = apply_rotary_emb(q, k, freqs_cis)
-        q = q * 1.4  # Sharper attention temperature
+        # q = q * 1.4  # Sharper attention temperature
 
         # ALiBi: per-head distance penalty (encourages local attention)
         pos = torch.arange(T, device=q.device, dtype=q.dtype)

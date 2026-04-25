@@ -740,9 +740,15 @@ Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embed
 - Runtime 32m 40s — sweet spot for batch size appears to be ~96
 - Run: outputs/shakespeare_diffusion_base/2026-04-24_*
 
+## Exp 102: Remove attention temperature scaling (q×1.0) with batch=96 — ✓ COMMITTED (val=0.7960, -0.0018 ⚡️)
+- With smaller batches (96), default flash-attention 1/√d scaling is optimal; q×1.4 was hurting
+- Validation drops significantly from 0.7978 to 0.7960; training loss stable at 0.6736
+- Insight: attention temperature optimization interacts with batch size; small batches provide enough noise without sharpening
+- Run: outputs/shakespeare_diffusion_base/2026-04-24_*
+
 ---
 
-**Current best: val_loss=0.7978**
+**Current best: val_loss=0.7960**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon 5×/AdamW 4× + cosine decay to 10%, **EMA (decay=0.998)** for val eval + text gen, **inference steps=256**, **RoPE** (theta=500), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm**, **antithetic time sampling**, **sigma×500**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
 
 ---
