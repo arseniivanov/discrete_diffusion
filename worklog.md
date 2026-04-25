@@ -727,9 +727,16 @@ Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embed
 - Clear monotonic trend: smaller batches → better generalization via gradient noise
 - Run: outputs/shakespeare_diffusion_base/2026-04-24_*
 
+## Exp 100: batch_size=64, context_length=512 — ✓ COMMITTED (val=0.7980, -0.0014)
+- Reduced batch size to 64 (400% more steps than original 384)
+- Validation improved 0.7994 → 0.7980; training loss spiked to 0.8232 (last-batch effect)
+- Runtime 34m 04s — per-step time 0.13s, still excellent GPU scaling
+- Gains are diminishing but still positive; sweet spot may be near 64–128
+- Run: outputs/shakespeare_diffusion_base/2026-04-24_*
+
 ---
 
-**Current best: val_loss=0.7994**
+**Current best: val_loss=0.7980**
 Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embedding=True, context=384, lr=4e-3, cosine masking noise, Muon 5×/AdamW 4× + cosine decay to 10%, **EMA (decay=0.998)** for val eval + text gen, **inference steps=256**, **RoPE** (theta=500), **8 register tokens**, **stacked input conv (2×k=3 depthwise with GELU)**, **stacked per-block depthwise conv (2×k=3 with GELU)**, **ALiBi locality bias (einsum, bfloat16)**, **QK-Norm**, **antithetic time sampling**, **sigma×500**, **sigma_in input bias (zero-init)**, **sigma_out direct logit bias (zero-init)**, **no outer SiLU on conditioning c**
 
 ---
