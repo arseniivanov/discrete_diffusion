@@ -111,10 +111,10 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     else:
         optimizer = optim.AdamW(model.parameters(), lr=cfg.trainer.lr)
 
-    total_steps = cfg.trainer.n_epochs * len(train_dataloader)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=cfg.trainer.lr * 4 * 0.1)
+    steps_per_epoch = len(train_dataloader)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=steps_per_epoch, T_mult=1, eta_min=cfg.trainer.lr * 4 * 0.1)
     if cfg.trainer.use_muon:
-        scheduler_muon = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_matrices, T_max=total_steps, eta_min=cfg.trainer.lr * 5 * 0.1)
+        scheduler_muon = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_matrices, T_0=steps_per_epoch, T_mult=1, eta_min=cfg.trainer.lr * 5 * 0.1)
 
     sampler = None
     if cfg.trainer.prob_sampling:
