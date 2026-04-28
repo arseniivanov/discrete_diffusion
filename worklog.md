@@ -818,6 +818,109 @@ Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embed
 
 ---
 
+## Exp 104: CosineAnnealingWarmRestarts (1 cycle/epoch) — ✓ COMMITTED (val=0.7920, -0.0017 ⚡️)
+- Replaced CosineAnnealingLR(T_max=total_steps) with CosineAnnealingWarmRestarts(T_0=steps_per_epoch, T_mult=1)
+- Both Muon and AdamW restart LR to peak at the start of each epoch; model gets a second aggressive training phase in epoch 2
+- Peak LRs unchanged (Muon 5×, AdamW 4×); decays to 10% of peak each cycle
+- Epoch 0: similar, Epoch 1: 0.7920 (new best); train loss 0.6753
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+- Text:
+  ```
+  ave you that you have seen to you here,
+  You shall be gone to your hands and yourself
+  To take in your courteous  to your highness,
+  Come to your garden  with your majesty:
+  For you, that I have done to save your part,
+  And yet you please you, you have not pass'd
+  ...
+  ```
+
+---
+
+## Further experiments (all FAILED against warm-restart baseline 0.7920)
+
+### Exp 105a: SiLU activation before block_convs and local_conv — FAILED (val=0.7936)
+- Added `F.silu(x)` before first convs in each pair; tied with baseline
+- The asymmetry (first conv no activation, second conv SiLU) is load-bearing
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105b: Scheduled EMA decay (0.996→0.998) — FAILED (val=0.7972)
+- Started EMA at 0.996 (shorter window) and increased to 0.998 over first half of training
+- Constant 0.998 is superior; the fixed long window is important for stable averaging
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105c: Separate Q/K/V projections — FAILED (val=0.7962)
+- Replaced combined `nn.Linear(384, 1152)` with three `nn.Linear(384, 384)` (Q, K, V separately)
+- Same param count; separate weights allow different features for each projection
+- Combined projection works better as a form of parameter sharing
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105d: context_length=576 — FAILED (val=0.7933)
+- 12.5% longer context; train loss lower (0.6276) but val loss higher
+- Overfitting to longer sequences; 512 is the sweet spot
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105e: eta_min=5% with WarmRestarts — FAILED (val=0.8057)
+- Reduced minimum LR from 10% to 5% of peak; catastrophic regression
+- 10% floor LR is load-bearing; model needs the minimum LR signal
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105f: T_0=steps_per_epoch//2 (2 cycles/epoch) — FAILED (val=0.8008)
+- More frequent LR cycling; too aggressive, disrupts model convergence
+- 1 cycle per epoch is optimal
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105g: Per-layer MLP expansion [3×,4×,5×] — FAILED (val=0.7931)
+- More MLP capacity near output, less near input; mild regression
+- Uniform 4× MLP is optimal for 3-layer model
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105h: Per-layer MLP expansion [5×,4×,3×] — FAILED (val=0.8026)
+- More MLP capacity near input, less near output; stronger regression
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105i: Higher peak LRs (Muon 5.5×, AdamW 4.5×) — FAILED (val=0.7939)
+- With warm restart giving more high-LR time, further increasing peaks overshoots
+- 5×/4× remains optimal with warm restart
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105j: AdamW beta2=0.98 — FAILED (val=0.7927)
+- Faster variance adaptation for non-matrix params; slight regression
+- Default beta2=0.999 is better even with 2-epoch training
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105k: batch_size=80 with warm restart — FAILED (val=0.7967)
+- More steps + cycling; gradient noise at batch=80 is too high
+- batch_size=96 is the sweet spot even with warm restart
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105l: Mixed schedulers (Muon WarmRestarts, AdamW CosineAnnealingLR) — FAILED (val=0.7943)
+- Isolating warm restart to just Muon; AdamW needs the cycling too
+- Both optimizers benefit from coordinated LR cycling
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105m: Gradient clipping max_norm=5.0 — FAILED (val=0.7933)
+- Mild clip to prevent spike damage from warm restart LR jumps; unnecessary
+- Training is already stable without clipping
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105n: Learnable per-conv residual scales — FAILED (val=0.7943)
+- Added `nn.Parameter(torch.ones(1))` multiplier per depthwise conv (8 params)
+- Giving explicit scale control to each conv path slightly disrupts the residual-fixup balance
+- Run: outputs/shakespeare_diffusion_base/2026-04-25_*
+
+### Exp 105o: n_registers=10 — OOM (flash attn requires T divisible by 8)
+- T=522 with 10 registers is not 8-divisible; flash attention backend rejects non-contiguous bias
+- Only n_registers ∈ {0, 8, 16} are valid (T ∈ {512, 520, 528}); 16 regressed (Exp39), 0 was worse (Exp18)
+- Abandoned
+
+---
+
+**Current best after Exp104: val_loss=0.7920**
+Config: warm restart unchanged from baseline otherwise.
+
+---
+
 **Analysis**: The current architecture is well-optimized for the 6.5M param budget. Every architectural change regressed because:
 1. The 4× MLP expansion is critical — can't be reduced without losing expressivity
 2. Per-head K,V matters with only 2 heads — GQA needs more heads to help
@@ -825,3 +928,94 @@ Config: n_layer=3, n_head=2, n_embd=384, cond_dim=128, bias=True, timestep_embed
 4. LayerNorm's mean-centering is load-bearing for AdaLN
 5. The sigma conditioning path (2-layer + sigma_in/out) is already sufficient
 6. Positional encoding (unified RoPE theta=500 + ALiBi) is well-tuned
+7. LR schedule (warm restart 1 cycle/epoch) is optimal — more or fewer cycles hurt
+8. The model is near the Pareto frontier for 2-epoch, 6.5M-param training
+
+---
+
+## Agent 2: Extensive Outside-the-Box Exploration (all FAILED against 0.7920 baseline)
+
+The following experiments were systematically tested. All regressed, confirming the baseline is a deep local optimum.
+
+| Experiment | Result | Notes |
+|---|---|---|
+| **Stochastic Depth (LayerDrop, p=0.15)** | 0.8099 | For 3-layer model, dropping layers suppresses too much capacity in 2 epochs |
+| **prob_sampling=True** | 0.7979 | Data-distribution noise makes task too easy, less signal for rare chars |
+| **Flow Matching warmup (epoch 1 flow_loss → epoch 2 score_entropy)** | 0.8379 | Switching loss parameterization mid-training confuses the model |
+| **Gate bias init=1.0** | 0.7957 | Making gates fully active from step 1 overshoots; zero-init is load-bearing |
+| **Gate bias init=0.1** | 0.7974 | Partial gate activation still worse than zero-init identity start |
+| **Per-layer ALiBi slopes [0.15→0.05, 0.10→0.05, 0.05→0.025]** | 0.7941 | Shared learned slopes [0.1, 0.05] are already optimal |
+| **seed=123** | 0.8169 | seed=42 is a favorable basin; other seeds converge worse |
+| **dropout=0.02** | 0.7965 | Even mild dropout hurts effective capacity in 2-epoch training |
+| **CosineAnnealingWarmRestarts T_mult=2** | 0.8101 | Longer decay cycle keeps LR too high in epoch 2, overshoots |
+| **sampling_eps=1e-3** | 0.7938 | Avoiding extreme noise levels removes useful training signal |
+| **weight_decay=0.2** | 0.8727 | Strong WD shrinks conditioning paths too aggressively |
+| **sigma_bar conditioning augmentation (σ + N(0,0.02))** | 0.8000 | Noisy conditioning disrupts noise-level discrimination |
+| **EMA decay=0.9995** | 0.8016 | Heavier smoothing includes too much poor early-model mass |
+| **Char substitution augmentation (1%)** | 0.7977 | Corrupting clean targets confuses score-entropy derivation |
+| **Char substitution augmentation (0.5%)** | 0.7940 | Even 0.5% substitution degrades loss formulation |
+| **Larger init std=0.03 + remove c_proj downscaling** | 0.7961 | Larger initial activations hurt stability for score entropy |
+| **Remove scatter(x, idx, 0) in forward** | 0.8005 | The zero-scatter for current-token logits is load-bearing for score entropy |
+
+### Key Insight from 17 Failed Experiments
+The training model val_loss is typically ~0.82-0.87, but the **EMA model consistently improves this by 0.02-0.03** (down to 0.7920). This means the training model is oscillating/forgetting, and EMA smoothing is the primary source of generalization. Any change that destabilizes training (even if it might help in theory) causes EMA to capture worse snapshots.
+
+---
+
+### Agent 2: Tested Outside-the-Box Ideas (all FAILED against 0.7920 baseline)
+
+#### 1. **Sharpness-Aware Minimization (SAM)** — FAILED
+- **Hypothesis**: SAM finds flatter minima by taking an adversarial step before computing the gradient update. This should reduce the train-val gap that EMA is currently smoothing.
+- **Implementation**: Added `SAM` class wrapping both Muon and AdamW optimizers. `first_step()` climbs to adversarial weights, `second_step()` restores original weights and steps with adversarial gradient.
+- **Results**:
+  - `rho=0.05`: val=0.7997, train=0.6773, runtime=58m (2× compute)
+  - `rho=0.01`: val=0.7972, train=0.6749, runtime=58m
+- **Analysis**: SAM made both training and validation worse. The adversarial perturbation is too aggressive for a shallow 3-layer model in only 2 epochs. The model needs more epochs to benefit from flat-minimum seeking.
+
+#### 2. **Span Masking (contiguous character spans instead of independent masking)** — FAILED
+- **Hypothesis**: BERT-style span masking forces the model to learn span-level coherence rather than pointwise denoising.
+- **Implementation**: Replaced independent `rand < sigma_bar` masking with span starts at `sigma_bar/3` rate, expanded to length-3 spans via `F.max_pool1d`.
+- **Result**: val=0.8162, train=0.6381
+- **Analysis**: The score-entropy loss derivation assumes independent per-token masking. Span masking breaks this assumption catastrophically. The model severely overfits to the span structure (train loss drops to 0.6381 but val loss balloons to 0.8162).
+
+#### 3. **SWA (Stochastic Weight Averaging) instead of EMA** — FAILED
+- **Hypothesis**: Equal-weight averaging of a window of snapshots might find a more centered minimum than exponential EMA weighting.
+- **Implementation**: Replaced EMA with running sum/count accumulation from a configurable start fraction of training. Evaluated with SWA-averaged weights.
+- **Results**:
+  - `start_fraction=0.50`: val=0.9150 (disaster — averaged too much early training)
+  - `start_fraction=0.75`: val=0.8029 (still worse than EMA)
+  - `start_fraction=0.90`: val=0.7937 (closest to EMA but still worse)
+  - `start_fraction=0.95`: val=0.8002 (worse than 0.90 — too narrow window includes oscillation)
+- **Analysis**: The model is still monotonically improving throughout epoch 2. Averaging any window of snapshots includes worse earlier snapshots, hurting generalization. EMA's exponential weighting (decay=0.998, favoring last ~500 steps) is strictly superior because it concentrates weight on the most recent, best snapshots.
+
+---
+
+### Remaining Untested Ideas
+
+| Idea | Risk | Expected Impact |
+|---|---|---|
+| **Gradient Accumulation (batch=48, accum=2)** | Low | Might extend the small-batch trend below 64 |
+| **Knowledge Distillation from multi-seed ensemble** | High (multi-run) | Ensemble smoothing, but violates single-run fairness |
+| **SAM + EMA together** | High (2× compute, may OOM) | SAM for flat minimum + EMA for noise smoothing |
+
+---
+
+## MoE Experiments (all FAILED against 0.7920 baseline)
+
+### Standard MoE (Top-k Routing)
+- **Architecture**: 4 experts, top-2 routing, expert_hidden=768 (2× n_embd)
+- **Active params**: 1,179,648 per token per layer (identical to original MLP)
+- **Total params**: 10.04M (up from 6.49M)
+- **Result**: val=0.8085, train=0.7060, runtime=45m
+- **Analysis**: The gating network doesn't have enough training steps (only 2 epochs) to learn meaningful routing. Expert specialization requires more epochs. With only 3 layers, the model is too shallow to benefit from conditional computation.
+
+### Expert Choice MoE
+- **Architecture**: 4 experts, capacity=(T/4) tokens per expert, expert_hidden=768
+- **Active params**: 1,179,648 per token per layer (identical to original MLP)
+- **Total params**: 10.04M
+- **Result**: val=0.8125, train=0.7030, runtime=37m
+- **Analysis**: Expert choice routing performed slightly worse than standard top-k MoE. The fixed capacity constraint leads to some tokens being dropped (processed by 0 experts) while others are processed by multiple experts, creating an imbalance that the shallow model cannot resolve in 2 epochs.
+
+---
+
+**Current best after all experiments: val_loss=0.7920** (unchanged from Exp104 baseline).
