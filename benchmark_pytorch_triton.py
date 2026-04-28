@@ -21,7 +21,6 @@ def benchmark_component(config, x, c, freqs_cis):
     # torch.compile baseline
     block_compiled = torch.compile(block_pt)
     
-    # TODO: Import your Triton rewritten block here
     block_triton = TritonDDiTBlock(config).to(DEVICE).eval()
 
     #warmup
@@ -30,6 +29,19 @@ def benchmark_component(config, x, c, freqs_cis):
             _ = block_pt(x, c, freqs_cis)
             _ = block_compiled(x, c, freqs_cis)
             _ = block_triton(x, c, freqs_cis)
+
+        out_pt = block_pt(x, c, freqs_cis)
+        out_comp = block_compiled(x, c, freqs_cis)
+        out_triton = block_triton(x, c, freqs_cis)
+        
+        err_comp = (out_comp - out_pt).abs().max().item()
+        err_triton = (out_triton - out_pt).abs().max().item()
+        print(f"Max Abs Error (Compile vs Eager): {err_comp:.6f}")
+        print(f"Max Abs Error (Triton vs Eager):  {err_triton:.6f}")
+        
+        torch.testing.assert_close(out_comp, out_pt, atol=1e-2, rtol=1e-2, msg="torch.compile output drift")
+        torch.testing.assert_close(out_triton, out_pt, atol=1e-2, rtol=1e-2, msg="Triton kernel is spitting garbage")
+        print("✓ Correctness verified.")
 
     # do_bench handles CUDA sync and percentiles automatically
     ms_pt = triton.testing.do_bench(lambda: block_pt(x, c, freqs_cis))

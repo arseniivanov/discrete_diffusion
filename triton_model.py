@@ -4,6 +4,9 @@ import triton
 import triton.language as tl
 from model import SelfAttention, MLP
 
+def cdiv(x, y):
+    return -(-x // y)
+
 @triton.jit
 def _fused_modulate_layernorm_kernel(
     x_ptr, shift_ptr, scale_ptr, out_ptr,
@@ -139,9 +142,6 @@ def _fused_gate_modulate_layernorm_kernel(
     rstd = 1.0 / tl.sqrt(var + eps)
 
     # --- PASS 3: Normalize, Modulate, and Store ---
-    shift_row_ptr = shift_ptr + row_idx * stride_shift_row
-    scale_row_ptr = scale_ptr + row_idx * stride_shift_row
-    out_row_ptr = out_ptr + row_idx * stride_out_row
 
     for off in range(0, n_cols, BLOCK_SIZE):
         cols = off + tl.arange(0, BLOCK_SIZE)
@@ -194,7 +194,7 @@ def fused_gate_modulate_layernorm(x_attn, gate_msa, x_skip, shift_mlp, scale_mlp
 @triton.jit
 def _fused_mlp_proj_epilogue_kernel(
     a_ptr, b_ptr, c_ptr, gate_ptr, skip_ptr,
-    M, N, K,
+    M, N, K, T,
     stride_am, stride_ak,
     stride_bk, stride_bn,
     stride_cm, stride_cn,
@@ -222,7 +222,7 @@ def _fused_mlp_proj_epilogue_kernel(
     accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
     for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
         a = tl.load(a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_SIZE_K, other=0.0)
-        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0)
+        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0).to(tl.bfloat16)
         accumulator += tl.dot(a, b)
         a_ptrs += BLOCK_SIZE_K * stride_ak
         b_ptrs += BLOCK_SIZE_K * stride_bk
@@ -262,7 +262,7 @@ def fused_mlp_proj_epilogue(x, weight, gate, skip):
     gate_flat = gate.squeeze(1) # Yields [B, N]
     out_flat = torch.empty((M, N), device=x.device, dtype=x.dtype)
 
-    grid = lambda META: (tl.cdiv(M, META['BLOCK_SIZE_M']) * tl.cdiv(N, META['BLOCK_SIZE_N']), )
+    grid = lambda META: (cdiv(M, META['BLOCK_SIZE_M']) * cdiv(N, META['BLOCK_SIZE_N']), )
     _fused_mlp_proj_epilogue_kernel[grid](
         x_flat, weight.t(), out_flat, gate_flat, skip_flat,
         M, N, K, T,
@@ -271,7 +271,7 @@ def fused_mlp_proj_epilogue(x, weight, gate, skip):
         out_flat.stride(0), out_flat.stride(1),
         gate_flat.stride(0), gate_flat.stride(1),
         skip_flat.stride(0), skip_flat.stride(1),
-        BLOCK_SIZE_N=128, BLOCK_SIZE_K=32,
+        BLOCK_SIZE_M=128, BLOCK_SIZE_N=128, BLOCK_SIZE_K=32,
         GROUP_SIZE_M=8
     )
     return out_flat.view(B, T, N)
