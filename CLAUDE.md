@@ -2,7 +2,7 @@
 # Autonomous Research Protocol: Discrete Diffusion
 
 ## Objective
-Minimize the validation loss of the discrete diffusion model over a 5-epoch training run. Secondary metric: subjective quality of the output string in `summary.txt`.
+Minimize the validation loss of the discrete diffusion model over a 2-epoch training run. Secondary metric: subjective quality of the output string in `summary.txt`.
 
 ## Architecture Constraints (HARD LIMITS)
 Hardware: Single RTX 5080 Ti (16GB VRAM). 
@@ -25,16 +25,16 @@ For fairness of the search, you are strictly forbidden from increasing:
 Current best solution to beat:
 
 --- Final Generated Text ---
-, thy soos,thy father,
-Were thou the time, and that thou lavest.
-Hast thou on the worst of thy face,
-Thy king of thy state, thou wilt have made thee thee,
-Than in thy heart, that thou wast not be blame,
-And come for thee, that thou hast thou to me:
-It is thy love, that I will not be song to live.
+ to take your honour to you, my lord.
 
-QUKE  MARGARIT:
-But, now that he is gone to give me life;
-For this song that thou has
+MENENIUS:
+I will not come to have them, for you have you need,
+To give me with your honour to your consent,
+And you are your honour and your mother,
+Your honour save you yet thae more,
+You have done to the matters of the cause;
+But the time shall be crook'd upon my gage,
+And make my hearted  the house of the nose,
+That he is no more that mame 
 
-Training finished. Final loss: 0.6829. Val loss: 0.8405. Duration: 19m 46s
+Training finished. Final loss: 0.6842. Val loss: 0.8188. Duration: 20m 54s
