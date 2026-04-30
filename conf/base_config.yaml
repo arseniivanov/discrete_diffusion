@@ -53,9 +53,9 @@ trainer:
 
 # Inference settings (used only if a model path is found)
 inference:
-  model_path: "model_epoch_1.pth"
-  run_inference: False
-  steps: 128
+  model_path: "outputs/shakespeare_diffusion_base/2026-04-29_22-17-07/model_epoch_15.pth"
+  run_inference: True
+  steps: 256
   eps: 1.0e-5
 
 # Hydra's setting for creating a unique output directory for each run
