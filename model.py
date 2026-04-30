@@ -8,6 +8,56 @@ import abc
 from fla.layers.gated_deltanet import GatedDeltaNet
 
 
+class DynTanh(nn.Module):
+    """
+    Dynamic Tanh normalization: replaces LayerNorm with a learnable tanh squashing.
+    Faster than LayerNorm (no mean/variance reduction) and compiler-friendly.
+    """
+    def __init__(self, dim, bias=True):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.ones(1))
+        self.gamma = nn.Parameter(torch.ones(dim))
+        if bias:
+            self.beta = nn.Parameter(torch.zeros(dim))
+        else:
+            self.register_parameter('beta', None)
+
+    def forward(self, x):
+        out = torch.tanh(self.alpha * x)
+        out = out * self.gamma
+        if self.beta is not None:
+            out = out + self.beta
+        return out
+
+
+class PolyDynTanh(nn.Module):
+    """
+    Polynomial DynTanh: replaces torch.tanh with a 7th-order Taylor polynomial
+    written in Horner form so torch.compile can lower it to FMA instructions.
+    """
+    def __init__(self, dim, bias=True):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.ones(1))
+        self.gamma = nn.Parameter(torch.ones(dim))
+        if bias:
+            self.beta = nn.Parameter(torch.zeros(dim))
+        else:
+            self.register_parameter('beta', None)
+
+    def forward(self, x):
+        a = self.alpha * x
+        a2 = a * a
+        # 7th-order Taylor series for tanh in Horner form (FMA-friendly)
+        # tanh(a) ≈ a * (1 + a2 * (-1/3 + a2 * (2/15 + a2 * (-17/315))))
+        p = a * (1.0 + a2 * (-0.3333333333 + a2 * (0.1333333333 + a2 * (-0.053968254))))
+        # Hard clamp to [-1, 1] to avoid polynomial divergence for large inputs
+        p = torch.clamp(p, -1.0, 1.0)
+        out = p * self.gamma
+        if self.beta is not None:
+            out = out + self.beta
+        return out
+
+
 def precompute_freqs_cis(head_dim: int, max_seq_len: int, theta: float = 500.0) -> torch.Tensor:
     freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
     t = torch.arange(max_seq_len)
@@ -108,8 +158,8 @@ class SelfAttention(nn.Module):
         self.ali_slopes = nn.Parameter(torch.tensor([0.1, 0.05]))
         # QK-Norm: normalize Q and K per-head before attention (stabilizes logit scale)
         head_dim = config.n_embd // config.n_head
-        self.q_norm = nn.LayerNorm(head_dim, bias=False)
-        self.k_norm = nn.LayerNorm(head_dim, bias=False)
+        self.q_norm = DynTanh(head_dim, bias=False)
+        self.k_norm = DynTanh(head_dim, bias=False)
 
     def forward(self, x, freqs_cis: torch.Tensor):
         B, T, C = x.size()
@@ -161,8 +211,8 @@ def bias_add_scale(
 class DDiTBlock(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
-        self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
-        
+        self.ln_1 = DynTanh(config.n_embd, bias=config.bias)
+
         # Select attention type
         use_gated_delta = getattr(config, 'use_gated_delta', False)
         gated_delta_layers = getattr(config, 'gated_delta_layers', None) 
@@ -172,7 +222,7 @@ class DDiTBlock(nn.Module):
         else:
             self.attn = SelfAttention(config)
             
-        self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_2 = DynTanh(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
         self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
         self.adaLN_modulation.weight.data.zero_()
@@ -199,7 +249,7 @@ class DDiTBlock(nn.Module):
 class DDitFinalLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.norm_final = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.norm_final = DynTanh(config.n_embd, bias=config.bias)
         self.linear = nn.Linear(config.n_embd, config.vocab_size)
         self.linear.weight.data.zero_()
         self.linear.bias.data.zero_()
@@ -287,7 +337,7 @@ class GPT(nn.Module):
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
-            ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
+            ln_f = DynTanh(config.n_embd, bias=config.bias),
         ))
         # Two-layer depthwise input conv: k=3 twice = RF 5 with nonlinearity between
         self.local_conv = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,

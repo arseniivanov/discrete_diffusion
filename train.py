@@ -255,7 +255,7 @@ def run_inference(cfg: DictConfig, model, noise, sh, device, dataset):
     final_x = None
     if cfg.noise.type == 'masking':
         print("Using Masking-based sampling (iterative unmasking)...")
-        final_x = sample_masking(model, noise, sh, cfg, device)
+        final_x = sample_masking(model, noise, sh, cfg, device, visualize=True)
     else: # Covers 'geometric' and 'loglinear' which use substitution
         print("Using Substitution-based sampling...")
         final_x = sample_substitution(model, noise, sh, cfg, device, dataset)

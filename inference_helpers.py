@@ -1,5 +1,5 @@
 import torch
-from dataset import StringHandler
+from dataset import StringHandler, decode
 from tqdm import tqdm
 from torch.nn import functional as F
 
@@ -137,15 +137,27 @@ def sample_substitution(model, noise, sh, cfg, device, dataset):
     
     return x
 
-def sample_masking(model, noise, sh, cfg, device):
+def sample_masking(model, noise, sh, cfg, device, fixed_tokens=None, fixed_mask=None, visualize=False):
     """Generates a sample using the iterative unmasking process."""
     steps = cfg.inference.steps
     mask_token_id = sh.mask_token_id
     x = torch.full((1, cfg.data.context_length), fill_value=mask_token_id, device=device, dtype=torch.long)
+
+    if fixed_tokens is not None and fixed_mask is not None:
+        x = torch.where(fixed_mask, fixed_tokens, x)
     timesteps = torch.linspace(1, 0, steps + 1, device=device)
 
+    if visualize:
+        import sys, time
+        # Enter alternate screen buffer (\033[?1049h) and hide cursor (\033[?25l)
+        sys.stdout.write("\033[?1049h\033[?25l")
+        sys.stdout.flush()
+        
+        mask_str = decode(torch.tensor([mask_token_id], device=device), sh)
+        if not mask_str: mask_str = "[MASK]"
+
     with torch.no_grad():
-        for i in tqdm(range(steps), desc="Generating (Masking)"):
+        for i in tqdm(range(steps), desc="Generating (Masking)", disable=visualize):
             num_masked = (x == mask_token_id).sum(dim=-1)
             if num_masked.max() == 0: break
             
@@ -165,7 +177,23 @@ def sample_masking(model, noise, sh, cfg, device):
 
             mask_update = torch.zeros_like(x, dtype=torch.bool).scatter_(1, indices_to_unmask, True)
             x = torch.where(mask_update, candidate_tokens, x)
-            
+            if fixed_tokens is not None and fixed_mask is not None:
+                x = torch.where(fixed_mask, fixed_tokens, x)
+
+            if visualize:
+                text_out = decode(x[0], sh).replace(mask_str, "█")
+                
+                # Move to top-left of the alternate screen (\033[H) and clear it (\033[2J)
+                sys.stdout.write("\033[H\033[2J")
+                sys.stdout.write(f"--- Denoising Step {i+1}/{steps} ---\n\n")
+                sys.stdout.write(text_out)
+                sys.stdout.flush()
+                time.sleep(0.05) 
+
+        if visualize: 
+            # Exit alternate screen buffer (\033[?1049l) and show cursor (\033[?25h)
+            sys.stdout.write("\033[?1049l\033[?25h")
+            sys.stdout.flush()
     return x
 
 def sample_discrete_flow(model, sh, cfg, device):
