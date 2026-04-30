@@ -10,8 +10,8 @@ save_model: True
 # Data loading settings
 data:
   dir: './shakespeare_char/'
-  batch_size: 256
-  context_length: 256
+  batch_size: 96
+  context_length: 512
 
 # Model architecture
 model:
@@ -54,7 +54,7 @@ trainer:
 # Inference settings (used only if a model path is found)
 inference:
   model_path: "outputs/shakespeare_diffusion_base/2026-04-29_22-17-07/model_epoch_15.pth"
-  run_inference: True
+  run_inference: False
   steps: 256
   eps: 1.0e-5
 
