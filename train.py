@@ -198,6 +198,9 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     with open(val_loss_log_path, 'a') as f:
         f.write(f'ema,{avg_ema_val_loss}\n')
 
+    if cfg.save_model:
+        torch.save(ema_model.state_dict(), os.path.join(run_dir, 'final_ema_model.pth'))
+
     # --- Final Logging ---
     end_time = time.time()
     duration_sec = end_time - start_time
@@ -235,7 +238,18 @@ def run_inference(cfg: DictConfig, model, noise, sh, device, dataset):
     """
     Contains the fair inference (sampling) logic that dispatches to the correct method.
     """
-    model.load_state_dict(torch.load(hydra.utils.to_absolute_path(cfg.inference.model_path), weights_only=True))
+    raw_sd = torch.load(hydra.utils.to_absolute_path(cfg.inference.model_path), weights_only=True)
+    
+    clean_sd = {k.replace('_orig_mod.', ''): v for k, v in raw_sd.items() if 'freqs_cis' not in k}
+    
+    # Load into the unwrapped base model
+    base_model = getattr(model, '_orig_mod', model)
+    
+    # Inject the correctly sized buffer to pass strict validation
+    if hasattr(base_model, 'freqs_cis'):
+        clean_sd['freqs_cis'] = base_model.freqs_cis
+    base_model.load_state_dict(clean_sd, strict=True)
+    
     model.eval()
 
     final_x = None
