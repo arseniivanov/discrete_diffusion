@@ -227,7 +227,7 @@ def _fused_mlp_proj_epilogue_kernel(
         a_ptrs += BLOCK_SIZE_K * stride_ak
         b_ptrs += BLOCK_SIZE_K * stride_bk
 
-    c = accumulator.to(tl.float16)
+    c = accumulator.to(tl.bfloat16)
 
     offs_m = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
     offs_n = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
@@ -238,8 +238,8 @@ def _fused_mlp_proj_epilogue_kernel(
     gate_ptrs = gate_ptr + batch_idx[:, None] * stride_gm + offs_n[None, :] * stride_gn
     skip_ptrs = skip_ptr + offs_m[:, None] * stride_sm + offs_n[None, :] * stride_sn
     
-    gate = tl.load(gate_ptrs, mask=mask, other=0.0).to(tl.float16)
-    skip = tl.load(skip_ptrs, mask=mask, other=0.0).to(tl.float16)
+    gate = tl.load(gate_ptrs, mask=mask, other=0.0).to(tl.bfloat16)
+    skip = tl.load(skip_ptrs, mask=mask, other=0.0).to(tl.bfloat16)
     
     c = (gate * c) + skip
     
@@ -280,6 +280,8 @@ class TritonDDiTBlock(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
         self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
+        self.adaLN_modulation.weight.data.zero_()
+        self.adaLN_modulation.bias.data.zero_()
         self.attn = SelfAttention(config)
         self.mlp = MLP(config)
 
