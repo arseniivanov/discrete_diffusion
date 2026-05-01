@@ -160,6 +160,9 @@ class SelfAttention(nn.Module):
         head_dim = config.n_embd // config.n_head
         self.q_norm = DynTanh(head_dim, bias=False)
         self.k_norm = DynTanh(head_dim, bias=False)
+        # Precompute distance matrix for ALiBi (up to block_size + register buffer)
+        max_seq_len = config.block_size + 16
+        self.register_buffer('dist', (torch.arange(max_seq_len).unsqueeze(0) - torch.arange(max_seq_len).unsqueeze(1)).abs())
 
     def forward(self, x, freqs_cis: torch.Tensor):
         B, T, C = x.size()
@@ -176,8 +179,7 @@ class SelfAttention(nn.Module):
         # q = q * 1.4  # Sharper attention temperature
 
         # ALiBi: per-head distance penalty (encourages local attention)
-        pos = torch.arange(T, device=q.device, dtype=q.dtype)
-        dist = (pos.unsqueeze(0) - pos.unsqueeze(1)).abs()  # (T, T)
+        dist = self.dist[:T, :T].to(dtype=q.dtype)  # (T, T)
         slopes = self.ali_slopes.to(dtype=q.dtype)
         ali_bias = -torch.einsum('h,ij->hij', slopes, dist).unsqueeze(0)  # (1, n_head, T, T), contiguous
 
@@ -278,22 +280,22 @@ class TimestepEmbedder(nn.Module):
             nn.Linear(hidden_size, hidden_size, bias=True),
         )
         self.frequency_embedding_size = frequency_embedding_size
+        half = frequency_embedding_size // 2
+        max_period = 10000
+        freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half)
+        self.register_buffer('freqs', freqs)
 
-    @staticmethod
-    def timestep_embedding(t, dim, max_period=10000):
+    def timestep_embedding(self, t, dim):
         """
         Create sinusoidal timestep embeddings.
         :param t: a 1-D Tensor of N indices, one per batch element.
                           These may be fractional.
         :param dim: the dimension of the output.
-        :param max_period: controls the minimum frequency of the embeddings.
         :return: an (N, D) Tensor of positional embeddings.
         """
         # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
         half = dim // 2
-        freqs = torch.exp(
-            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
-        ).to(device=t.device)
+        freqs = self.freqs.to(device=t.device)
         args = t[:, None].float() * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:

@@ -97,9 +97,11 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
 
     ema_decay = 0.998
     ema_shadow = {}
+    ema_params = []
     for n, p in model.named_parameters():
         key = n.removeprefix('_orig_mod.')
         ema_shadow[key] = p.data.clone()
+        ema_params.append((p, ema_shadow[key]))
 
     # --- Optimizer ---
     if cfg.trainer.use_muon:
@@ -154,10 +156,13 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             if cfg.trainer.use_muon:
                 optimizer_matrices.step()
             with torch.no_grad():
-                for n, p in model.named_parameters():
-                    key = n.removeprefix('_orig_mod.')
-                    if key in ema_shadow:
-                        ema_shadow[key].mul_(ema_decay).add_(p.data, alpha=1 - ema_decay)
+                params = []
+                emas = []
+                for p, e in ema_params:
+                    params.append(p.data)
+                    emas.append(e)
+                torch._foreach_mul_(emas, ema_decay)
+                torch._foreach_add_(emas, params, alpha=1 - ema_decay)
             scheduler.step()
             if cfg.trainer.use_muon:
                 scheduler_muon.step()
