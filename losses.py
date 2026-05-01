@@ -187,7 +187,12 @@ def loss_function(
 
     if isinstance(noise, MaskingNoise):
         fn = perturb_batch_with_masking(x0, sigma_bar[:, None], sh)
-    elif sampler is not None:
+        log_score = model(fn, sigma_bar)
+        # Use direct cross-entropy for masking noise (flow-matching objective)
+        loss = F.cross_entropy(log_score.view(-1, log_score.size(-1)), x0.view(-1))
+        return loss
+
+    if sampler is not None:
         fn = perturb_batch_with_distribution(x0, sigma_bar[:, None], sh, sampler)
     else:
         fn = perturb_batch(x0, sigma_bar[:, None], sh)
