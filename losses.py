@@ -176,14 +176,23 @@ def loss_function(
         loss:           scalar tensor with the loss.
     """
 
-    if t is None: # time step
-        t = (1 - sampling_eps) * torch.rand(x0.shape[0], device=x0.device) + sampling_eps
+    if t is None: # time step — antithetic pairs (t, 1-t) for balanced noise coverage
+        B = x0.shape[0]
+        half = (B + 1) // 2
+        u = torch.rand(half, device=x0.device)
+        u = torch.cat([u, 1.0 - u])[:B]
+        t = sampling_eps + (1.0 - 2.0 * sampling_eps) * u
 
     sigma_bar, sigma = noise(t)
 
     if isinstance(noise, MaskingNoise):
         fn = perturb_batch_with_masking(x0, sigma_bar[:, None], sh)
-    elif sampler is not None:
+        log_score = model(fn, sigma_bar)
+        # Use direct cross-entropy for masking noise (flow-matching objective)
+        loss = F.cross_entropy(log_score.view(-1, log_score.size(-1)), x0.view(-1))
+        return loss
+
+    if sampler is not None:
         fn = perturb_batch_with_distribution(x0, sigma_bar[:, None], sh, sampler)
     else:
         fn = perturb_batch(x0, sigma_bar[:, None], sh)
