@@ -51,7 +51,6 @@ class GPTConfig:
     cond_dim: int = 64
     dropout: float = 0.0
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    timestep_embedding: bool = True
     norm: str = 'dyntanh'
 
     # GatedDeltaNet settings (replaces KDA)
@@ -134,8 +133,10 @@ class SelfAttention(nn.Module):
         self.dropout = config.dropout
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        # ALiBi locality slopes: learnable, one per head; positive = prefer nearby tokens
-        self.ali_slopes = nn.Parameter(torch.tensor([0.1, 0.05]))
+        # ALiBi locality slopes: learnable, one per head; positive = prefer nearby tokens.
+        # Init as a geometric series base 0.5 starting at 0.1 (matches the prior 2-head [0.1, 0.05]).
+        slope_init = 0.1 * torch.tensor([0.5 ** i for i in range(config.n_head)])
+        self.ali_slopes = nn.Parameter(slope_init)
         # QK-Norm: normalize Q and K per-head before attention (stabilizes logit scale)
         head_dim = config.n_embd // config.n_head
         self.q_norm = get_norm(config, head_dim, bias=False)
@@ -285,23 +286,6 @@ class TimestepEmbedder(nn.Module):
         t_emb = self.mlp(t_freq)
         return t_emb
 
-
-class MLPEmbedder(nn.Module):
-    """
-    Embeds scalar timesteps into vector representations.
-    """
-    def __init__(self, hidden_size):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(1, hidden_size, bias=True),
-            nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size, bias=True),
-        )
-
-    def forward(self, t):
-        t_emb = self.mlp(t.unsqueeze(-1))
-        return t_emb
-
 class GPT(nn.Module):
 
     def __init__(self, config):
@@ -309,10 +293,7 @@ class GPT(nn.Module):
         assert config.vocab_size is not None
         assert config.block_size is not None
         self.config = config
-        if config.timestep_embedding:
-            self.sigma_map = TimestepEmbedder(config.cond_dim)
-        else:
-            self.sigma_map = MLPEmbedder(config.cond_dim)
+        self.sigma_map = TimestepEmbedder(config.cond_dim)
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
@@ -324,17 +305,6 @@ class GPT(nn.Module):
                                     groups=config.n_embd, bias=config.bias)
         self.local_conv2 = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
                                      groups=config.n_embd, bias=config.bias)
-        # Per-block stacked depthwise convs: two k=3 convs with GELU between (RF=5), same as input
-        self.block_convs = nn.ModuleList([
-            nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
-                      groups=config.n_embd, bias=config.bias)
-            for _ in range(config.n_layer)
-        ])
-        self.block_convs2 = nn.ModuleList([
-            nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
-                      groups=config.n_embd, bias=config.bias)
-            for _ in range(config.n_layer)
-        ])
         # Register tokens: prepended to the sequence, stripped before output
         self.n_registers = 8
         self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
@@ -346,16 +316,6 @@ class GPT(nn.Module):
         head_dim = config.n_embd // config.n_head
         self.register_buffer('freqs_cis', precompute_freqs_cis(head_dim, config.block_size + self.n_registers))
         self.lm_head = DDitFinalLayer(config)
-
-        self.n_registers = 8
-        self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
-        self.sigma_in = nn.Linear(config.cond_dim, config.n_embd, bias=False)
-        self.sigma_out = nn.Linear(config.cond_dim, config.vocab_size, bias=False)
-        head_dim = config.n_embd // config.n_head
-        self.register_buffer('freqs_cis', precompute_freqs_cis(head_dim, config.block_size + self.n_registers))
-        
-        torch.nn.init.zeros_(self.sigma_in.weight)
-        torch.nn.init.zeros_(self.sigma_out.weight)
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -394,10 +354,8 @@ class GPT(nn.Module):
         x = self.transformer.drop(x)
         n_reg = self.n_registers
         freqs_cis = self.freqs_cis[:n_reg + t]
-        for i, block in enumerate(self.transformer.h):
+        for block in self.transformer.h:
             x = block(x, c, freqs_cis)
-            # x = x + self.block_convs[i](x.transpose(1, 2)).transpose(1, 2)
-            # x = x + self.block_convs2[i](F.silu(x).transpose(1, 2)).transpose(1, 2)
         x = x[:, n_reg:]  # strip registers before output
         x = self.transformer.ln_f(x)
 

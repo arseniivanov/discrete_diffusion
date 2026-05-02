@@ -8,9 +8,9 @@ from torch.distributions import Categorical
 from dataset import get_data_loader, StringHandler, print_wrapped, decode
 from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise, MaskingNoise
 import torch.optim as optim
-from losses import loss_function, flow_loss
+from losses import loss_function
 import os
-from inference_helpers import sample_masking, sample_substitution, sample_discrete_flow
+from inference_helpers import sample_masking, sample_substitution
 from tqdm import tqdm
 import time
 import random
@@ -58,7 +58,7 @@ def main(cfg: DictConfig) -> None:
 
     model_args = dict(n_layer=cfg.model.n_layer, n_head=cfg.model.n_head, n_embd=cfg.model.n_embd,
                         cond_dim=cfg.model.cond_dim, bias=cfg.model.bias, vocab_size=vocab_size,
-                        block_size=cfg.data.context_length, dropout=cfg.model.dropout, timestep_embedding=cfg.model.timestep_embedding,
+                        block_size=cfg.data.context_length, dropout=cfg.model.dropout,
                         use_gated_delta=getattr(cfg.model, 'use_gated_delta', False),
                         gated_delta_layers=getattr(cfg.model, 'gated_delta_layers', None),
                         attn_mode=getattr(cfg.model, 'attn_mode', 'chunk'),
@@ -105,9 +105,11 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
 
     # --- Optimizer ---
     if cfg.trainer.use_muon:
-        _emb = {'transformer.wte.weight', 'transformer.wpe.weight'}
-        matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2 and n not in _emb]
-        other_params = [p for n, p in model.named_parameters() if p.dim() != 2 or n in _emb]
+        _emb = {'transformer.wte.weight'}
+        def _is_emb(n: str) -> bool:
+            return n.removeprefix('_orig_mod.') in _emb
+        matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2 and not _is_emb(n)]
+        other_params = [p for n, p in model.named_parameters() if p.dim() != 2 or _is_emb(n)]
         optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr * 5)
         optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr * 4)
     else:

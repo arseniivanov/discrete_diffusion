@@ -206,70 +206,9 @@ def sample_masking(model, noise, sh, cfg, device, fixed_tokens=None, fixed_mask=
             final_tokens = torch.argmax(log_score, dim=-1)
             x = torch.where(x == mask_token_id, final_tokens, x)
 
-        if visualize: 
+        if visualize:
             # Exit alternate screen buffer (\033[?1049l) and show cursor (\033[?25h)
             sys.stdout.write("\033[?1049l\033[?25h")
             sys.stdout.flush()
-            
-    return x
 
-def sample_discrete_flow(model, sh, cfg, device):
-    """
-    Euler Method Sampling for Discrete Flow Matching.
-    Mathematically: p(x_{t+h}) = p(x_t) + h * velocity
-    Where velocity = (p(x_1) - p(x_t)) / (1 - t)
-    """
-    model.eval()
-    
-    batch_size = 1 # Or cfg.inference.batch_size if you have it
-    seq_len = cfg.data.context_length
-    vocab_size = sh.get_vocab_size()
-    steps = cfg.inference.steps
-    
-    # 1. Start from Pure Noise (t=0)
-    x = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
-    
-    # 2. Time steps
-    indices = range(steps)
-    
-    with torch.no_grad():
-        for i in tqdm(indices, desc="Flow Sampling"):
-            # Current time t (scalar)
-            t_val = i / steps
-            t = torch.full((batch_size,), t_val, device=device)
-            
-            # Predict x1 (Data) from current x
-            logits = model(x, t)
-            p1 = F.softmax(logits, dim=-1) # The model's belief of what the clean data is
-            
-            # Calculate mixing weight alpha for this step
-            # We want to move from p_t to p_{t+dt}
-            # The simplified update rule derived from the ODE is:
-            # p_next = (1 - alpha) * one_hot(x) + alpha * p1
-            # where alpha = dt / (1 - t)
-            # if we have N steps, dt = 1/N. 1-t = (N-i)/N.
-            # alpha = (1/N) / ((N-i)/N) = 1 / (N - i)
-            
-            # Avoid division by zero at the very last step
-            if i == steps - 1:
-                # At the very end, just take the model's prediction
-                x = torch.argmax(logits, dim=-1)
-                break
-                
-            alpha = 1.0 / (steps - i)
-            
-            # Create the One-Hot vector of our CURRENT state
-            x_one_hot = F.one_hot(x, num_classes=vocab_size).float()
-            
-            # Euler Step in Probability Space
-            # "Mix the current state with the predicted goal"
-            probs = (1 - alpha) * x_one_hot + alpha * p1
-            
-            # Renormalize just in case (though math says it sums to 1)
-            # probs = probs / probs.sum(dim=-1, keepdim=True)
-            
-            # Sample next token
-            # We use the Gumbel-Max trick or standard sampling
-            x = torch.distributions.Categorical(probs=probs).sample()
-            
     return x
