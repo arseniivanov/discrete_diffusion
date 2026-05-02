@@ -17,6 +17,10 @@ def benchmark_component(config, x, c, freqs_cis):
     # Eager PyTorch
     block_pt = DDiTBlock(config, layer_idx=0).to(DEVICE).eval()
     
+    #Needed despite original not having this, otherwise we might skip code
+    block_pt.adaLN_modulation.weight.data.normal_(mean=0.0, std=0.02)
+    block_pt.adaLN_modulation.bias.data.normal_(mean=0.0, std=0.02)
+
     # torch.compile baseline
     block_compiled = torch.compile(block_pt)
     

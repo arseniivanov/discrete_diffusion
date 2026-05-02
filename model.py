@@ -52,6 +52,7 @@ class GPTConfig:
     dropout: float = 0.0
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     timestep_embedding: bool = True
+    norm: str = 'dyntanh'
 
     # GatedDeltaNet settings (replaces KDA)
     use_gated_delta: bool = False
@@ -64,6 +65,16 @@ class GPTConfig:
     gated_delta_conv_size: int = 2  # Ignored when use_short_conv=False
     gated_delta_norm_eps: float = 1e-5
 
+def get_norm(config, dim, bias=True):
+    if config.norm == 'dyntanh':
+        return DynTanh(dim, bias=bias)
+    elif config.norm == 'ln':
+        return nn.LayerNorm(dim, bias=bias, elementwise_affine=False)
+    elif config.norm == 'rms':
+        return nn.RMSNorm(dim, elementwise_affine=False)
+    else:
+        raise ValueError(f"Unknown norm type: {config.norm}")
+    
 class MLP(nn.Module):
 
     def __init__(self, config):
@@ -127,8 +138,8 @@ class SelfAttention(nn.Module):
         self.ali_slopes = nn.Parameter(torch.tensor([0.1, 0.05]))
         # QK-Norm: normalize Q and K per-head before attention (stabilizes logit scale)
         head_dim = config.n_embd // config.n_head
-        self.q_norm = DynTanh(head_dim, bias=False)
-        self.k_norm = DynTanh(head_dim, bias=False)
+        self.q_norm = get_norm(config, head_dim, bias=False)
+        self.k_norm = get_norm(config, head_dim, bias=False)
         # Precompute distance matrix for ALiBi (up to block_size + register buffer)
         max_seq_len = config.block_size + 16
         self.register_buffer('dist', (torch.arange(max_seq_len).unsqueeze(0) - torch.arange(max_seq_len).unsqueeze(1)).abs())
@@ -182,8 +193,7 @@ def bias_add_scale(
 class DDiTBlock(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
-        self.ln_1 = DynTanh(config.n_embd, bias=config.bias)
-
+        self.ln_1 = get_norm(config, config.n_embd, bias=config.bias)
         # Select attention type
         use_gated_delta = getattr(config, 'use_gated_delta', False)
         gated_delta_layers = getattr(config, 'gated_delta_layers', None) 
@@ -193,7 +203,7 @@ class DDiTBlock(nn.Module):
         else:
             self.attn = SelfAttention(config)
             
-        self.ln_2 = DynTanh(config.n_embd, bias=config.bias)
+        self.ln_2 = get_norm(config, config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
         self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
         self.adaLN_modulation.weight.data.zero_()
@@ -220,7 +230,7 @@ class DDiTBlock(nn.Module):
 class DDitFinalLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.norm_final = DynTanh(config.n_embd, bias=config.bias)
+        self.norm_final = get_norm(config, config.n_embd, bias=config.bias)
         self.linear = nn.Linear(config.n_embd, config.vocab_size)
         self.linear.weight.data.zero_()
         self.linear.bias.data.zero_()
@@ -307,7 +317,7 @@ class GPT(nn.Module):
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
-            ln_f = DynTanh(config.n_embd, bias=config.bias),
+            ln_f = get_norm(config, config.n_embd, bias=config.bias),
         ))
         # Two-layer depthwise input conv: k=3 twice = RF 5 with nonlinearity between
         self.local_conv = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
