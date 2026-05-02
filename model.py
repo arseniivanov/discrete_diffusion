@@ -7,6 +7,27 @@ from dataclasses import dataclass
 import abc
 from fla.layers.gated_deltanet import GatedDeltaNet
 
+class DynTanh(nn.Module):
+    """
+    Dynamic Tanh normalization: replaces LayerNorm with a learnable tanh squashing.
+    Faster than LayerNorm (no mean/variance reduction) and compiler-friendly.
+    """
+    def __init__(self, dim, bias=True):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.ones(1))
+        self.gamma = nn.Parameter(torch.ones(dim))
+        if bias:
+            self.beta = nn.Parameter(torch.zeros(dim))
+        else:
+            self.register_parameter('beta', None)
+
+    def forward(self, x):
+        out = torch.tanh(self.alpha * x)
+        out = out * self.gamma
+        if self.beta is not None:
+            out = out + self.beta
+        return out
+
 def precompute_freqs_cis(head_dim: int, max_seq_len: int, theta: float = 500.0) -> torch.Tensor:
     freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
     t = torch.arange(max_seq_len)
@@ -14,6 +35,7 @@ def precompute_freqs_cis(head_dim: int, max_seq_len: int, theta: float = 500.0) 
     return torch.polar(torch.ones_like(freqs), freqs)  # complex64
 
 def apply_rotary_emb(q: torch.Tensor, k: torch.Tensor, freqs_cis: torch.Tensor):
+    # q, k: (B, n_head, T, head_dim); freqs_cis: (T, head_dim//2) complex
     def rotate(x: torch.Tensor) -> torch.Tensor:
         x_c = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
         return torch.view_as_real(x_c * freqs_cis).flatten(-2).type_as(x)
@@ -101,36 +123,45 @@ class SelfAttention(nn.Module):
         self.dropout = config.dropout
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-
-        self.head_dim = config.n_embd // config.n_head
-        self.q_norm = nn.LayerNorm(self.head_dim, bias=False)
-        self.k_norm = nn.LayerNorm(self.head_dim, bias=False)
+        # ALiBi locality slopes: learnable, one per head; positive = prefer nearby tokens
+        self.ali_slopes = nn.Parameter(torch.tensor([0.1, 0.05]))
+        # QK-Norm: normalize Q and K per-head before attention (stabilizes logit scale)
+        head_dim = config.n_embd // config.n_head
+        self.q_norm = DynTanh(head_dim, bias=False)
+        self.k_norm = DynTanh(head_dim, bias=False)
+        # Precompute distance matrix for ALiBi (up to block_size + register buffer)
+        max_seq_len = config.block_size + 16
+        self.register_buffer('dist', (torch.arange(max_seq_len).unsqueeze(0) - torch.arange(max_seq_len).unsqueeze(1)).abs())
 
     def forward(self, x, freqs_cis: torch.Tensor):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+        B, T, C = x.size()
 
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2) # (B, nh, T, hs)
+        head_dim = C // self.n_head
+        k = k.view(B, T, self.n_head, head_dim).transpose(1, 2)  # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, head_dim).transpose(1, 2)  # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, head_dim).transpose(1, 2)  # (B, nh, T, hs)
 
         q = self.q_norm(q)
         k = self.k_norm(k)
         q, k = apply_rotary_emb(q, k, freqs_cis)
-        # self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # q = q * 1.4  # Sharper attention temperature
+
+        # ALiBi: per-head distance penalty (encourages local attention)
+        dist = self.dist[:T, :T].to(dtype=q.dtype)  # (T, T)
+        slopes = self.ali_slopes.to(dtype=q.dtype)
+        ali_bias = -torch.einsum('h,ij->hij', slopes, dist).unsqueeze(0)  # (1, n_head, T, T), contiguous
+
         if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=False)
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=ali_bias, dropout_p=self.dropout if self.training else 0, is_causal=False)
         else:
-            # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+            att = att + ali_bias
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
-            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+            y = att @ v
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
 
-        # output projection
         y = self.resid_dropout(self.c_proj(y))
         return y
 
@@ -151,8 +182,8 @@ def bias_add_scale(
 class DDiTBlock(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
-        self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias, elementwise_affine=False)
-        
+        self.ln_1 = DynTanh(config.n_embd, bias=config.bias)
+
         # Select attention type
         use_gated_delta = getattr(config, 'use_gated_delta', False)
         gated_delta_layers = getattr(config, 'gated_delta_layers', None) 
@@ -162,7 +193,7 @@ class DDiTBlock(nn.Module):
         else:
             self.attn = SelfAttention(config)
             
-        self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias, elementwise_affine=False)
+        self.ln_2 = DynTanh(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
         self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
         self.adaLN_modulation.weight.data.zero_()
@@ -170,25 +201,26 @@ class DDiTBlock(nn.Module):
 
     def forward(self, x, c, freqs_cis: torch.Tensor):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c)[:, None].chunk(6, dim=2)
-        
-        # Self-attention block
+
         x_skip = x
         x = modulate(self.ln_1(x), shift_msa, scale_msa)
-        x = self.attn(x, freqs_cis)
-        x = gate_msa * x + x_skip  # Residual connection with gating
-        
-        # MLP block
+        if isinstance(self.attn, SelfAttention):
+            x = self.attn(x, freqs_cis)
+        else:
+            x = self.attn(x)
+        x = gate_msa * x + x_skip
+
         x_skip = x
         x = modulate(self.ln_2(x), shift_mlp, scale_mlp)
         x = self.mlp(x)
         x = gate_mlp * x + x_skip
-        
+
         return x
 
 class DDitFinalLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.norm_final = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.norm_final = DynTanh(config.n_embd, bias=config.bias)
         self.linear = nn.Linear(config.n_embd, config.vocab_size)
         self.linear.weight.data.zero_()
         self.linear.bias.data.zero_()
@@ -209,7 +241,7 @@ class TimestepEmbedder(nn.Module):
     """
     Embeds scalar timesteps into vector representations.
     """
-    def __init__(self, hidden_size, frequency_embedding_size=256, silu=True):
+    def __init__(self, hidden_size, frequency_embedding_size=256):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(frequency_embedding_size, hidden_size, bias=True),
@@ -217,22 +249,21 @@ class TimestepEmbedder(nn.Module):
             nn.Linear(hidden_size, hidden_size, bias=True),
         )
         self.frequency_embedding_size = frequency_embedding_size
+        half = frequency_embedding_size // 2
+        max_period = 10000
+        freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half)
+        self.register_buffer('freqs', freqs)
 
-    @staticmethod
-    def timestep_embedding(t, dim, max_period=10000):
+    def timestep_embedding(self, t, dim):
         """
         Create sinusoidal timestep embeddings.
         :param t: a 1-D Tensor of N indices, one per batch element.
                           These may be fractional.
         :param dim: the dimension of the output.
-        :param max_period: controls the minimum frequency of the embeddings.
         :return: an (N, D) Tensor of positional embeddings.
         """
         # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
-        half = dim // 2
-        freqs = torch.exp(
-            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
-        ).to(device=t.device)
+        freqs = self.freqs.to(device=t.device)
         args = t[:, None].float() * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:
@@ -240,7 +271,7 @@ class TimestepEmbedder(nn.Module):
         return embedding
 
     def forward(self, t):
-        t_freq = self.timestep_embedding(t*500, self.frequency_embedding_size)
+        t_freq = self.timestep_embedding(t * 500, self.frequency_embedding_size)
         t_emb = self.mlp(t_freq)
         return t_emb
 
@@ -276,8 +307,34 @@ class GPT(nn.Module):
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([DDiTBlock(config, i) for i in range(config.n_layer)]),
-            ln_f = nn.LayerNorm(config.n_embd, bias=config.bias),
+            ln_f = DynTanh(config.n_embd, bias=config.bias),
         ))
+        # Two-layer depthwise input conv: k=3 twice = RF 5 with nonlinearity between
+        self.local_conv = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
+                                    groups=config.n_embd, bias=config.bias)
+        self.local_conv2 = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
+                                     groups=config.n_embd, bias=config.bias)
+        # Per-block stacked depthwise convs: two k=3 convs with GELU between (RF=5), same as input
+        self.block_convs = nn.ModuleList([
+            nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
+                      groups=config.n_embd, bias=config.bias)
+            for _ in range(config.n_layer)
+        ])
+        self.block_convs2 = nn.ModuleList([
+            nn.Conv1d(config.n_embd, config.n_embd, kernel_size=3, padding=1,
+                      groups=config.n_embd, bias=config.bias)
+            for _ in range(config.n_layer)
+        ])
+        # Register tokens: prepended to the sequence, stripped before output
+        self.n_registers = 8
+        self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
+        # Sigma-conditioned input bias: direct noise-level signal at embedding level (zero-init)
+        self.sigma_in = nn.Linear(config.cond_dim, config.n_embd, bias=False)
+        # Sigma-conditioned output logit bias: direct sigma→vocab shift bypassing the transformer (zero-init)
+        self.sigma_out = nn.Linear(config.cond_dim, config.vocab_size, bias=False)
+        # RoPE frequencies: extra slots for register token positions
+        head_dim = config.n_embd // config.n_head
+        self.register_buffer('freqs_cis', precompute_freqs_cis(head_dim, config.block_size + self.n_registers))
         self.lm_head = DDitFinalLayer(config)
 
         self.n_registers = 8
@@ -295,18 +352,14 @@ class GPT(nn.Module):
         for pn, p in self.named_parameters():
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+        torch.nn.init.zeros_(self.sigma_in.weight)
+        torch.nn.init.zeros_(self.sigma_out.weight)
 
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+        assert self.get_num_params()/1e6 < 6.5, f"Illegal change, you cannot increase parameter count, its a trivial measure"
 
-    def get_num_params(self, non_embedding=True):
-        """
-        Return the number of parameters in the model.
-        For non-embedding count (default), the position embeddings get subtracted.
-        The token embeddings would too, except due to the parameter sharing these
-        params are actually used as weights in the final layer, so we include them.
-        """
-        n_params = sum(p.numel() for p in self.parameters())
-        return n_params
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -317,27 +370,29 @@ class GPT(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, sigma):
-        sigma = sigma.reshape(-1) #noise (B * L,)
-        b, t = idx.size() 
-        c = self.sigma_map(sigma) #elementwise
+        sigma = sigma.reshape(-1)
+        b, t = idx.size()
+        c = self.sigma_map(sigma)
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
 
-        # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        reg = self.register_tokens.expand(b, -1, -1)
-        x = torch.cat([reg, tok_emb], dim=1)
-        x = x + self.sigma_in(c).unsqueeze(1)
+        tok_emb = self.transformer.wte(idx)  # (b, t, n_embd)
+        tok_emb = tok_emb + self.local_conv(tok_emb.transpose(1, 2)).transpose(1, 2)
+        tok_emb = tok_emb + self.local_conv2(F.silu(tok_emb).transpose(1, 2)).transpose(1, 2)
+        reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
+        x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
+        x = x + self.sigma_in(c).unsqueeze(1)          # sigma-conditioned global bias
         x = self.transformer.drop(x)
-        n_regs = self.n_registers
-        freqs_cis = self.freqs_cis[:n_regs + t]
-        for block in self.transformer.h:
+        n_reg = self.n_registers
+        freqs_cis = self.freqs_cis[:n_reg + t]
+        for i, block in enumerate(self.transformer.h):
             x = block(x, c, freqs_cis)
-        x = x[:, n_regs:]
+            # x = x + self.block_convs[i](x.transpose(1, 2)).transpose(1, 2)
+            # x = x + self.block_convs2[i](F.silu(x).transpose(1, 2)).transpose(1, 2)
+        x = x[:, n_reg:]  # strip registers before output
         x = self.transformer.ln_f(x)
 
-        # inference-time mini-optimization: only forward the lm_head on the very last position
-        x = self.lm_head(x, c) # note: using list [-1] to preserve the time dim
-        x = x + self.sigma_out(c).unsqueeze(1)
+        x = self.lm_head(x, c)
+        x = x + self.sigma_out(c).unsqueeze(1)  # direct sigma→logit bias (b,1,vocab) → broadcasts
         x = torch.scatter(x, -1, idx[..., None], torch.zeros_like(x[..., :1]))
 
         return x

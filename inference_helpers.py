@@ -1,5 +1,5 @@
 import torch
-from dataset import StringHandler
+from dataset import StringHandler, decode
 from tqdm import tqdm
 from torch.nn import functional as F
 
@@ -137,34 +137,79 @@ def sample_substitution(model, noise, sh, cfg, device, dataset):
     
     return x
 
-def sample_masking(model, noise, sh, cfg, device):
-    """Generates a sample using the iterative unmasking process."""
+def sample_masking(model, noise, sh, cfg, device, fixed_tokens=None, fixed_mask=None, visualize=False):
+    """Generates a sample using the rigorous MDLM reverse process (Absorbing State)."""
     steps = cfg.inference.steps
     mask_token_id = sh.mask_token_id
     x = torch.full((1, cfg.data.context_length), fill_value=mask_token_id, device=device, dtype=torch.long)
+
+    if fixed_tokens is not None and fixed_mask is not None:
+        x = torch.where(fixed_mask, fixed_tokens, x)
+        
     timesteps = torch.linspace(1, 0, steps + 1, device=device)
 
-    with torch.no_grad():
-        for i in tqdm(range(steps), desc="Generating (Masking)"):
-            num_masked = (x == mask_token_id).sum(dim=-1)
-            if num_masked.max() == 0: break
-            
-            t = timesteps[i] * torch.ones(x.shape[0], 1, device=device)
-            sigma_bar, _ = noise(t)
-            
-            log_score = model(x, sigma_bar)
-            probs = F.softmax(log_score, dim=-1)
-            candidate_tokens = sample_categorical(probs)
-            
-            confidence = torch.gather(probs, -1, candidate_tokens[..., None]).squeeze(-1)
-            confidence = torch.where(x != mask_token_id, -1.0, confidence)
-            
-            ratio_to_unmask = 1.0 / (steps - i)
-            num_to_unmask = (num_masked * ratio_to_unmask).long().clamp(min=1)
-            indices_to_unmask = torch.topk(confidence, k=num_to_unmask.item(), dim=-1).indices
+    if visualize:
+        import sys, time
+        # Enter alternate screen buffer (\033[?1049h) and hide cursor (\033[?25l)
+        sys.stdout.write("\033[?1049h\033[?25l")
+        sys.stdout.flush()
+        
+        mask_str = decode(torch.tensor([mask_token_id], device=device), sh)
+        if not mask_str: mask_str = "[MASK]"
 
-            mask_update = torch.zeros_like(x, dtype=torch.bool).scatter_(1, indices_to_unmask, True)
+    with torch.no_grad():
+        for i in tqdm(range(steps), desc="Generating (MDLM Masking)", disable=visualize):
+            is_masked = (x == mask_token_id)
+            if not is_masked.any(): break
+            
+            t_curr = timesteps[i] * torch.ones(x.shape[0], 1, device=device)
+            t_next = timesteps[i+1] * torch.ones(x.shape[0], 1, device=device)
+            
+            curr_sigma_bar, _ = noise(t_curr)
+            next_sigma_bar, _ = noise(t_next)
+            
+            # 1. Model predicts its belief of the clean data (x_0)
+            log_score = model(x, curr_sigma_bar)
+            probs = F.softmax(log_score, dim=-1)
+            
+            # 2. Sample candidate tokens from the distribution
+            candidate_tokens = torch.distributions.Categorical(probs=probs).sample()
+            
+            # 3. FRONTIER MATH: Calculate exact unmasking probability based on schedule
+            # P(unmask) = (sigma_curr - sigma_next) / sigma_curr
+            denom = curr_sigma_bar.clamp(min=1e-6) # prevent div-by-zero
+            unmask_prob = (curr_sigma_bar - next_sigma_bar) / denom
+            
+            # 4. Flip a coin for every token in the batch
+            unmask_decision = torch.rand(x.shape, device=device) < unmask_prob
+            
+            # 5. Only apply candidates to tokens that are currently masked AND won the coin flip
+            mask_update = is_masked & unmask_decision
             x = torch.where(mask_update, candidate_tokens, x)
+            
+            if fixed_tokens is not None and fixed_mask is not None:
+                x = torch.where(fixed_mask, fixed_tokens, x)
+
+            if visualize:
+                text_out = decode(x[0], sh).replace(mask_str, "█")
+                
+                # Move to top-left of the alternate screen (\033[H) and clear it (\033[2J)
+                sys.stdout.write("\033[H\033[2J")
+                sys.stdout.write(f"--- MDLM Denoising Step {i+1}/{steps} ---\n\n")
+                sys.stdout.write(text_out)
+                sys.stdout.flush()
+                time.sleep(0.05) 
+
+        # Final cleanup: if any masks stubbornly survived to t=0, force them to resolve greedily
+        if (x == mask_token_id).any():
+            log_score = model(x, torch.zeros_like(curr_sigma_bar))
+            final_tokens = torch.argmax(log_score, dim=-1)
+            x = torch.where(x == mask_token_id, final_tokens, x)
+
+        if visualize: 
+            # Exit alternate screen buffer (\033[?1049l) and show cursor (\033[?25h)
+            sys.stdout.write("\033[?1049l\033[?25h")
+            sys.stdout.flush()
             
     return x
 

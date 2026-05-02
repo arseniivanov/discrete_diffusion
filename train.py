@@ -1,7 +1,9 @@
+import torch
+torch.cuda.memory._set_allocator_settings('expandable_segments:True')  # prevent fragmentation OOM
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
-import torch
 from torch.distributions import Categorical
 from dataset import get_data_loader, StringHandler, print_wrapped, decode
 from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise, MaskingNoise
@@ -93,21 +95,29 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     val_loss_log_path = os.path.join(run_dir, 'val_loss_log.csv')
     summary_log_path = os.path.join(run_dir, 'summary.txt')
 
+    ema_decay = 0.998
+    ema_shadow = {}
+    ema_params = []
+    for n, p in model.named_parameters():
+        key = n.removeprefix('_orig_mod.')
+        ema_shadow[key] = p.data.clone()
+        ema_params.append((p, ema_shadow[key]))
+
     # --- Optimizer ---
     if cfg.trainer.use_muon:
         _emb = {'transformer.wte.weight', 'transformer.wpe.weight'}
         matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2 and n not in _emb]
-        other_params = [p for n, p in model.named_parameters() if p.dim() != 2 and n not in _emb]
-        optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr * 8)
-        optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr * 7)
+        other_params = [p for n, p in model.named_parameters() if p.dim() != 2 or n in _emb]
+        optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr * 5)
+        optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr * 4)
     else:
         optimizer = optim.AdamW(model.parameters(), lr=cfg.trainer.lr)
 
-    total_steps = cfg.trainer.n_epochs * len(train_dataloader)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=cfg.trainer.lr * 0.7)
+    steps_per_epoch = len(train_dataloader)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=steps_per_epoch, T_mult=1, eta_min=cfg.trainer.lr * 4 * 0.1)
     if cfg.trainer.use_muon:
-        scheduler_muon = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_matrices, T_max=total_steps, eta_min=cfg.trainer.lr * 0.8)
- 
+        scheduler_muon = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_matrices, T_0=steps_per_epoch, T_mult=1, eta_min=cfg.trainer.lr * 5 * 0.1)
+
     sampler = None
     if cfg.trainer.prob_sampling:
         distribution = dataset.distribution.to(device)
@@ -145,6 +155,14 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             optimizer.step()
             if cfg.trainer.use_muon:
                 optimizer_matrices.step()
+            with torch.no_grad():
+                params = []
+                emas = []
+                for p, e in ema_params:
+                    params.append(p.data)
+                    emas.append(e)
+                torch._foreach_mul_(emas, ema_decay)
+                torch._foreach_add_(emas, params, alpha=1 - ema_decay)
             scheduler.step()
             if cfg.trainer.use_muon:
                 scheduler_muon.step()
@@ -168,6 +186,26 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
         if cfg.save_model:
             torch.save(model.state_dict(), os.path.join(run_dir, f'model_epoch_{epoch+1}.pth'))
 
+    ema_model = GPT(model.config).to(device)
+    sd = ema_model.state_dict()
+    for k in sd:
+        if k in ema_shadow:
+            sd[k] = ema_shadow[k].to(device)
+    ema_model.load_state_dict(sd)
+    ema_model.eval()
+    total_ema_val_loss = 0
+    with torch.no_grad():
+        for batch in val_dataloader:
+            batch = batch.to(device)
+            loss = loss_function(ema_model, batch, noise, sh, sampler=None)
+            total_ema_val_loss += loss.item()
+    avg_ema_val_loss = total_ema_val_loss / len(val_dataloader)
+    with open(val_loss_log_path, 'a') as f:
+        f.write(f'ema,{avg_ema_val_loss}\n')
+
+    if cfg.save_model:
+        torch.save(ema_model.state_dict(), os.path.join(run_dir, 'final_ema_model.pth'))
+
     # --- Final Logging ---
     end_time = time.time()
     duration_sec = end_time - start_time
@@ -182,13 +220,12 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             f.write(f"Total Runtime (seconds): {duration_sec:.2f}\n")
 
             f.write("\n\n--- Final Qualitative Sample ---\n")
-            model.eval() # Set model to evaluation mode for inference
             
             final_x = None
             if cfg.noise.type == 'masking':
-                final_x = sample_masking(model, noise, sh, cfg, device)
-            else: # Covers 'geometric' and 'loglinear'
-                final_x = sample_substitution(model, noise, sh, cfg, device, dataset)
+                final_x = sample_masking(ema_model, noise, sh, cfg, device)
+            else:
+                final_x = sample_substitution(ema_model, noise, sh, cfg, device, dataset)
             
             final_text = decode(final_x[0], sh)
             
@@ -197,19 +234,33 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             print("\n--- Final Generated Text ---")
             print_wrapped(final_text, end='\n\n')
 
+    del ema_model
+    torch.cuda.empty_cache()
+
     print(f"Training finished. Final loss: {final_loss:.4f}. Duration: {duration_str}")
 
 def run_inference(cfg: DictConfig, model, noise, sh, device, dataset):
     """
     Contains the fair inference (sampling) logic that dispatches to the correct method.
     """
-    model.load_state_dict(torch.load(hydra.utils.to_absolute_path(cfg.inference.model_path), weights_only=True))
+    raw_sd = torch.load(hydra.utils.to_absolute_path(cfg.inference.model_path), weights_only=True)
+    
+    clean_sd = {k.replace('_orig_mod.', ''): v for k, v in raw_sd.items() if 'freqs_cis' not in k}
+    
+    # Load into the unwrapped base model
+    base_model = getattr(model, '_orig_mod', model)
+    
+    # Inject the correctly sized buffer to pass strict validation
+    if hasattr(base_model, 'freqs_cis'):
+        clean_sd['freqs_cis'] = base_model.freqs_cis
+    base_model.load_state_dict(clean_sd, strict=True)
+    
     model.eval()
 
     final_x = None
     if cfg.noise.type == 'masking':
         print("Using Masking-based sampling (iterative unmasking)...")
-        final_x = sample_masking(model, noise, sh, cfg, device)
+        final_x = sample_masking(model, noise, sh, cfg, device, visualize=True)
     else: # Covers 'geometric' and 'loglinear' which use substitution
         print("Using Substitution-based sampling...")
         final_x = sample_substitution(model, noise, sh, cfg, device, dataset)
