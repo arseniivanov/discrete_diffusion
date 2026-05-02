@@ -154,6 +154,37 @@ def score_entropy(
 
     return loss
 
+def masked_ce_loss(model, x0, x_t, sigma_bar, sh):
+    """
+    Time-Conditioned Masked Cross-Entropy for MDLM.
+    Calculates loss ONLY on the masked tokens.
+    """
+    vocab_size = sh.get_vocab_size()
+    mask_token_id = sh.mask_token_id
+
+    # Find exactly which tokens were masked
+    mask_decision = (x_t == mask_token_id)
+
+    # Forward pass
+    log_score = model(x_t, sigma_bar)
+
+    # Flatten for CE calculation
+    logits_flat = log_score.view(-1, vocab_size)
+    x0_flat = x0.view(-1)
+    mask_decision_flat = mask_decision.view(-1)
+
+    # Calculate unreduced CE
+    loss_per_token = F.cross_entropy(logits_flat, x0_flat, reduction='none')
+
+    # Zero out loss for visible tokens
+    loss_masked_only = loss_per_token * mask_decision_flat.float()
+
+    # Average the loss over the number of masked tokens (avoid div by zero)
+    num_masked = mask_decision_flat.sum().clamp(min=1.0)
+    final_loss = loss_masked_only.sum() / num_masked
+
+    return final_loss
+
 def loss_function(
         model: GPT,
         x0: torch.Tensor,
@@ -187,9 +218,7 @@ def loss_function(
 
     if isinstance(noise, MaskingNoise):
         fn = perturb_batch_with_masking(x0, sigma_bar[:, None], sh)
-        log_score = model(fn, sigma_bar)
-        # Use direct cross-entropy for masking noise (flow-matching objective)
-        loss = F.cross_entropy(log_score.view(-1, log_score.size(-1)), x0.view(-1))
+        loss = masked_ce_loss(model, x0, fn, sigma_bar, sh)
         return loss
 
     if sampler is not None:
