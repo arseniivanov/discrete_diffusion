@@ -5,7 +5,7 @@ from model import GPT, GPTConfig, DDiTBlock, precompute_freqs_cis
 from triton_model import TritonDDiTBlock
 from dataset import StringHandler
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 # Set your baseline dimensions. 
 BATCH_SIZE = 1
@@ -82,14 +82,11 @@ def run_benchmark(cfg: DictConfig):
     vocab_size = sh.get_vocab_size()
 
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        model_dict = OmegaConf.to_container(cfg.model, resolve=True)
         config = GPTConfig(
             block_size=seq_len, 
             vocab_size=vocab_size, 
-            n_layer=cfg.model.n_layer, 
-            n_head=cfg.model.n_head, 
-            n_embd=cfg.model.n_embd, 
-            cond_dim=cfg.model.cond_dim,
-            use_gated_delta=getattr(cfg.model, 'use_gated_delta', False)
+            **model_dict
         )
         
         x = torch.randn(batch_size, seq_len, config.n_embd, device=device)
