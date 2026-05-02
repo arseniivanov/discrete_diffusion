@@ -109,12 +109,12 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
         matrix_params = [p for n, p in model.named_parameters() if p.dim() == 2 and n not in _emb]
         other_params = [p for n, p in model.named_parameters() if p.dim() != 2 or n in _emb]
         optimizer_matrices = optim.Muon(matrix_params, lr=cfg.trainer.lr * 6)
-        optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr * 4)
+        optimizer = optim.AdamW(other_params, lr=cfg.trainer.lr * 5)
     else:
         optimizer = optim.AdamW(model.parameters(), lr=cfg.trainer.lr)
 
     steps_per_epoch = len(train_dataloader)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=steps_per_epoch, T_mult=1, eta_min=cfg.trainer.lr * 4 * 0.1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=steps_per_epoch, T_mult=1, eta_min=cfg.trainer.lr * 5 * 0.1)
     if cfg.trainer.use_muon:
         scheduler_muon = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_matrices, T_0=steps_per_epoch, T_mult=1, eta_min=cfg.trainer.lr * 6 * 0.1)
 
