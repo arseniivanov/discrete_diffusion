@@ -217,8 +217,8 @@ def loss_function(
     sigma_bar, sigma = noise(t)
 
     if isinstance(noise, MaskingNoise):
-        # Clamp masking probability to minimum 10% to ensure consistent training signal
-        sigma_bar = sigma_bar.clamp(min=0.10)
+        # Clamp masking probability to minimum 30% to ensure consistent training signal
+        sigma_bar = sigma_bar.clamp(min=0.30)
         fn = perturb_batch_with_masking(x0, sigma_bar[:, None], sh)
         loss = masked_ce_loss(model, x0, fn, sigma_bar, sh)
         return loss
