@@ -5,5 +5,4 @@ defaults:
 hydra:
   sweeper:
     params:
-      noise.type: log_linear, masking
-      noise.schedule: cosine, linear
+      noise.type: log_linear, geometric, masking

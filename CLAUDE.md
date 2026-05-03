@@ -11,6 +11,8 @@ For fairness of the search, you are strictly forbidden from increasing:
 - `model.n_layer` (> 3)
 - `model.n_head` (> 2)
 - `model.n_embd` (> 384)
+- Adding parameters to the framework
+- Changing the loss function 
 
 ## Workflow
 1. Analyze the current codebase, focusing on `model.py`, `losses.py`, and `conf/agent_conf.yaml`.
@@ -24,17 +26,17 @@ For fairness of the search, you are strictly forbidden from increasing:
 
 Current best solution to beat:
 
---- Final Generated Text ---
- to take your honour to you, my lord.
+--- Final Generated Text ---                                                                                                                                                                                                                                                                                                                        
+ee and pleberal                                                                                                                                                                                                                                                                                                                                     
+That he dyestundred brain at her grace bear.                                                                                                                                                                                                                                                                                                        
+Shall not let him , cannot go be, you dare no her                                                                                                                                                                                                                                                                                                   
+As Evok yef. Hear on, not a mean, that so will make a sister                                                                                                                                                                                                                                                                                        
+                                                                                                                                                                                                                                                                                                                                                    
+DUKE  VINCENTIO:                                                                                                                                                                                                                                                                                                                                    
+Rebellion of Yourso use thee this anc Away.                                                                                                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                                                                                                                    
+GLOUCESTER:                                                                                                                                                                                                                                                                                                                                         
+Why, tho                                                                                                                                                                                                                                                                                                                                            
+                                                                                                                                                                                                                                                                                                                                                    
+Training finished. Final loss: 1.7652. Duration: 10m 50s                                                                                                                                                                                                                                                                                            
 
-MENENIUS:
-I will not come to have them, for you have you need,
-To give me with your honour to your consent,
-And you are your honour and your mother,
-Your honour save you yet thae more,
-You have done to the matters of the cause;
-But the time shall be crook'd upon my gage,
-And make my hearted  the house of the nose,
-That he is no more that mame 
-
-Training finished. Final loss: 0.6842. Val loss: 0.8188. Duration: 20m 54s

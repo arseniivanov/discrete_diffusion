@@ -477,8 +477,8 @@ class MaskingNoise(Noise):
                             Options: 'linear', 'cosine'.
         """
         super().__init__()
-        if schedule not in ['linear', 'cosine']:
-            raise ValueError("Schedule must be 'linear' or 'cosine'")
+        if schedule not in ['linear', 'cosine', 'cosine_squared']:
+            raise ValueError("Schedule must be 'linear', 'cosine', or 'cosine_squared'")
         self.schedule = schedule
 
     def alpha_t(self, t: torch.Tensor) -> torch.Tensor:
@@ -491,6 +491,9 @@ class MaskingNoise(Noise):
         elif self.schedule == 'cosine':
             # Cosine schedule, often found to be effective
             return torch.cos(t * math.pi / 2.0)
+        elif self.schedule == 'cosine_squared':
+            # More aggressive masking in the mid-range
+            return torch.cos(t * math.pi / 2.0) ** 2
 
     def total_noise(self, t: torch.Tensor) -> torch.Tensor:
         """
@@ -510,6 +513,9 @@ class MaskingNoise(Noise):
         elif self.schedule == 'cosine':
             # d/dt (1 - cos(t*pi/2)) = (pi/2) * sin(t*pi/2)
             return (math.pi / 2.0) * torch.sin(t * math.pi / 2.0)
+        elif self.schedule == 'cosine_squared':
+            # d/dt (1 - cos^2(t*pi/2)) = (pi/2) * sin(t*pi)
+            return (math.pi / 2.0) * torch.sin(t * math.pi)
 
     def __call__(self, t):
         return self.total_noise(t), self.rate_noise(t)
