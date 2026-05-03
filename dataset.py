@@ -178,7 +178,7 @@ def perturb_batch_with_masking(x0: torch.Tensor, sigma_bar: torch.Tensor, sh: St
     rand_probs = torch.rand_like(x0, dtype=torch.float32)
     should_mask = rand_probs < sigma_bar
 
-    # BERT-style mixed masking
+    # BERT-style mixed masking: 80% [MASK], 10% random token, 10% keep original
     rand_strategy = torch.rand_like(x0, dtype=torch.float32)
     mask_replace = rand_strategy < 0.8
     random_replace = (rand_strategy >= 0.8) & (rand_strategy < 0.9)
