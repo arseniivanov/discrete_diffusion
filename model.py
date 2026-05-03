@@ -358,7 +358,7 @@ class GPT(nn.Module):
             for _ in range(config.n_layer)
         ])
         # Register tokens: prepended to the sequence, stripped before output
-        self.n_registers = 8
+        self.n_registers = 0
         self.register_tokens = nn.Parameter(torch.zeros(1, self.n_registers, config.n_embd))
         # Sigma-conditioned input bias: direct noise-level signal at embedding level (zero-init)
         self.sigma_in = nn.Linear(config.cond_dim, config.n_embd, bias=False)

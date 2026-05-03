@@ -20,6 +20,17 @@ class StringHandler():
             self.meta['vocab_size'] += 1
         
         self.mask_token_id = self.meta['stoi'][mask_token_string]
+        
+        # Compute data distribution for realistic random-token masking
+        bin_path = os.path.join(data_dir, 'train.bin')
+        if os.path.isfile(bin_path):
+            data_arr = np.memmap(bin_path, dtype=np.uint16, mode='r')
+            counts = np.bincount(data_arr, minlength=self.meta['vocab_size'])
+            self.distribution = torch.from_numpy(counts).float()
+            self.distribution = self.distribution / self.distribution.sum()
+        else:
+            # Fallback to uniform if train.bin not found
+            self.distribution = torch.ones(self.meta['vocab_size']) / self.meta['vocab_size']
 
     def itos(self, idx):
         # We need to handle potential out-of-bounds index if meta file is not updated
