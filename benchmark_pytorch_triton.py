@@ -2,14 +2,11 @@
 import torch
 import triton
 from model import GPT, GPTConfig, DDiTBlock, precompute_freqs_cis
-from triton_model import TritonDDiTBlock
+from triton_model import TritonDDiTBlock, TritonDDiTDynTanh
 from dataset import StringHandler
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-# Set your baseline dimensions. 
-BATCH_SIZE = 1
-SEQ_LEN = 256
 DEVICE = 'cuda'
 
 def benchmark_component(config, x, c, freqs_cis):
@@ -24,7 +21,11 @@ def benchmark_component(config, x, c, freqs_cis):
     # torch.compile baseline
     block_compiled = torch.compile(block_pt)
     
-    block_triton = TritonDDiTBlock(config).to(DEVICE).eval()
+    if config.norm == 'dyntanh':
+        block_triton = TritonDDiTDynTanh(config).to(DEVICE).eval()
+    else:
+        block_triton = TritonDDiTBlock(config).to(DEVICE).eval()
+
     block_triton.load_state_dict(block_pt.state_dict(), strict=False)
 
     #warmup
@@ -48,13 +49,15 @@ def benchmark_component(config, x, c, freqs_cis):
         print("✓ Correctness verified.")
 
     # do_bench handles CUDA sync and percentiles automatically
-    ms_pt = triton.testing.do_bench(lambda: block_pt(x, c, freqs_cis))
-    ms_comp = triton.testing.do_bench(lambda: block_compiled(x, c, freqs_cis))
-    ms_triton = triton.testing.do_bench(lambda: block_triton(x, c, freqs_cis))
+    with torch.no_grad():
+        ms_pt = triton.testing.do_bench(lambda: block_pt(x, c, freqs_cis))
+        ms_comp = triton.testing.do_bench(lambda: block_compiled(x, c, freqs_cis))
+        ms_triton = triton.testing.do_bench(lambda: block_triton(x, c, freqs_cis))
     
     print(f"Eager Component:    {ms_pt:.4f} ms")
     print(f"Compiled Component: {ms_comp:.4f} ms")
     print(f"Triton Component:   {ms_triton:.4f} ms")
+    print(f"Roofline 3080Ti:    3.0500 ms")
 
 def benchmark_full_model(config, idx, sigma):
     print("\n--- Benchmarking Full GPT Forward Pass ---")
@@ -66,8 +69,11 @@ def benchmark_full_model(config, idx, sigma):
             _ = model_pt(idx, sigma)
             _ = model_compiled(idx, sigma)
 
-    ms_full_pt = triton.testing.do_bench(lambda: model_pt(idx, sigma))
-    ms_full_comp = triton.testing.do_bench(lambda: model_compiled(idx, sigma))
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+        ms_full_pt = triton.testing.do_bench(lambda: model_pt(idx, sigma))
+        ms_full_comp = triton.testing.do_bench(lambda: model_compiled(idx, sigma))
 
     print(f"Eager Model:    {ms_full_pt:.4f} ms")
     print(f"Compiled Model: {ms_full_comp:.4f} ms")

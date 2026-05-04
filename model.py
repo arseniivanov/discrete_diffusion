@@ -22,10 +22,10 @@ class DynTanh(nn.Module):
             self.register_parameter('beta', None)
 
     def forward(self, x):
-        out = torch.tanh(self.alpha * x)
-        out = out * self.gamma
+        out = torch.tanh(self.alpha * x) #global scale across dim + tanh
+        out = out * self.gamma # elementwise scale across dim 
         if self.beta is not None:
-            out = out + self.beta
+            out = out + self.beta # shift
         return out
 
 def precompute_freqs_cis(head_dim: int, max_seq_len: int, theta: float = 500.0) -> torch.Tensor:
@@ -68,9 +68,9 @@ def get_norm(config, dim, bias=True):
     if config.norm == 'dyntanh':
         return DynTanh(dim, bias=bias)
     elif config.norm == 'ln':
-        return nn.LayerNorm(dim, bias=bias, elementwise_affine=False)
+        return nn.LayerNorm(dim, bias=bias, elementwise_affine=True)
     elif config.norm == 'rms':
-        return nn.RMSNorm(dim, elementwise_affine=False)
+        return nn.RMSNorm(dim, elementwise_affine=True)
     else:
         raise ValueError(f"Unknown norm type: {config.norm}")
     

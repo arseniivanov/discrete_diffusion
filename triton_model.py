@@ -25,24 +25,18 @@ def _fused_modulate_layernorm_kernel(
     scale_row_ptr = scale_ptr + batch_idx * stride_scale_row
     out_row_ptr = out_ptr + row_idx * stride_out_row
 
-    # --- PASS 1: Compute Mean ---
-    _mean = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
-    for off in range(0, n_cols, BLOCK_SIZE):
-        cols = off + tl.arange(0, BLOCK_SIZE)
-        mask = cols < n_cols
-        a = tl.load(x_row_ptr + cols * stride_x_col, mask=mask, other=0.0).to(tl.float32)
-        _mean += a
-    mean = tl.sum(_mean, axis=0) / n_cols
-
-    # --- PASS 2: Compute Variance ---
-    _var = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
+    _sum = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
+    _sq_sum = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
     for off in range(0, n_cols, BLOCK_SIZE):
         cols = off + tl.arange(0, BLOCK_SIZE)
         mask = cols < n_cols
         x = tl.load(x_row_ptr + cols * stride_x_col, mask=mask, other=0.0).to(tl.float32)
-        x_centered = tl.where(mask, x - mean, 0.0)
-        _var += x_centered * x_centered
-    var = tl.sum(_var, axis=0) / n_cols
+        _sum += x
+        _sq_sum += x * x
+        
+    mean = tl.sum(_sum, axis=0) / n_cols
+    sq_mean = tl.sum(_sq_sum, axis=0) / n_cols
+    var = sq_mean - (mean * mean)
     rstd = 1.0 / tl.sqrt(var + eps)
 
     # --- PASS 3: Normalize, Modulate, and Store ---
@@ -276,12 +270,11 @@ def fused_mlp_proj_epilogue(x, weight, gate, skip):
     )
     return out_flat.view(B, T, N)
 
+
 class TritonDDiTBlock(nn.Module):
     def __init__(self, config, layer_idx=0):
         super().__init__()
         self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
-        self.adaLN_modulation.weight.data.zero_()
-        self.adaLN_modulation.bias.data.zero_()
         self.attn = SelfAttention(config)
         self.mlp = MLP(config)
 
@@ -294,6 +287,215 @@ class TritonDDiTBlock(nn.Module):
         x_attn = self.attn(x_mod, freqs_cis)
 
         x_mod_2, x_skip = fused_gate_modulate_layernorm(x_attn, gate_msa, x_skip, shift_mlp, scale_mlp)
+
+        x_mlp_hidden = self.mlp.gelu(self.mlp.c_fc(x_mod_2))
+        x_out = fused_mlp_proj_epilogue(x_mlp_hidden, self.mlp.c_proj.weight, gate_mlp, x_skip)
+        return x_out
+
+@triton.jit
+def _fused_modulate_dyntanh_kernel(
+    x_ptr, shift_ptr, scale_ptr,
+    alpha_ptr, gamma_ptr, beta_ptr,
+    out_ptr,
+    n_cols, T,
+    stride_x_row, stride_x_col,
+    stride_shift_row, stride_shift_col,
+    stride_scale_row, stride_scale_col,
+    stride_out_row, stride_out_col,
+    HAS_BETA: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr
+):
+    row_idx = tl.program_id(0)
+    batch_idx = row_idx // T
+
+    x_row_ptr = x_ptr + row_idx * stride_x_row
+    shift_row_ptr = shift_ptr + batch_idx * stride_shift_row
+    scale_row_ptr = scale_ptr + batch_idx * stride_scale_row
+    out_row_ptr = out_ptr + row_idx * stride_out_row
+
+    alpha = tl.load(alpha_ptr)
+
+    for off in range(0, n_cols, BLOCK_SIZE):
+        cols = off + tl.arange(0, BLOCK_SIZE)
+        mask = cols < n_cols
+
+        x = tl.load(x_row_ptr + cols * stride_x_col, mask=mask, other=0.0).to(tl.float32)
+        gamma = tl.load(gamma_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+
+        if HAS_BETA:
+            beta = tl.load(beta_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+        else:
+            beta = 0.0
+
+        scale = tl.load(scale_row_ptr + cols * stride_scale_col, mask=mask, other=0.0).to(tl.float32)
+        shift = tl.load(shift_row_ptr + cols * stride_shift_col, mask=mask, other=0.0).to(tl.float32)
+
+        dt = tanh(x * alpha) * gamma + beta
+        out = dt * (1.0 + scale) + shift
+
+        tl.store(out_row_ptr + cols * stride_out_col, out, mask=mask)
+
+def fused_modulate_dyntanh(x, shift, scale, alpha, gamma, beta=None):
+    B, T, C = x.shape
+    x_flat = x.view(-1, C)
+    shift_flat = shift.squeeze(1)
+    scale_flat = scale.squeeze(1)
+
+    out = torch.empty_like(x_flat)
+
+    n_rows = x_flat.shape[0]
+    n_cols = x_flat.shape[1]
+    BLOCK_SIZE = triton.next_power_of_2(n_cols)
+    grid = (n_rows,)
+
+    _fused_modulate_dyntanh_kernel[grid](
+        x_flat, shift_flat, scale_flat,
+        alpha, gamma, beta,
+        out,
+        n_cols, T,
+        x_flat.stride(0), x_flat.stride(1),
+        shift_flat.stride(0), shift_flat.stride(1),
+        scale_flat.stride(0), scale_flat.stride(1),
+        out.stride(0), out.stride(1),
+        HAS_BETA=(beta is not None),
+        BLOCK_SIZE=BLOCK_SIZE
+    )
+    return out.view(B, T, C)
+
+@triton.jit
+def _fused_gate_modulate_dyntanh_kernel(
+    attn_ptr, gate_ptr, skip_ptr, shift_ptr, scale_ptr,
+    alpha_ptr, gamma_ptr, beta_ptr,
+    out_ptr, new_skip_ptr,
+    n_cols, T,
+    stride_attn_row, stride_attn_col,
+    stride_gate_row, stride_gate_col,
+    stride_skip_row, stride_skip_col,
+    stride_shift_row, stride_shift_col,
+    stride_scale_row, stride_scale_col,
+    stride_out_row, stride_out_col,
+    stride_new_skip_row, stride_new_skip_col,
+    HAS_BETA: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr
+):
+    row_idx = tl.program_id(0)
+    batch_idx = row_idx // T
+
+    attn_row_ptr = attn_ptr + row_idx * stride_attn_row
+    skip_row_ptr = skip_ptr + row_idx * stride_skip_row
+    new_skip_row_ptr = new_skip_ptr + row_idx * stride_new_skip_row
+
+    gate_row_ptr = gate_ptr + batch_idx * stride_gate_row
+    shift_row_ptr = shift_ptr + batch_idx * stride_shift_row
+    scale_row_ptr = scale_ptr + batch_idx * stride_scale_row
+    out_row_ptr = out_ptr + row_idx * stride_out_row
+
+    alpha = tl.load(alpha_ptr)
+
+    for off in range(0, n_cols, BLOCK_SIZE):
+        cols = off + tl.arange(0, BLOCK_SIZE)
+        mask = cols < n_cols
+
+        attn = tl.load(attn_row_ptr + cols * stride_attn_col, mask=mask, other=0.0).to(tl.float32)
+        gate = tl.load(gate_row_ptr + cols * stride_gate_col, mask=mask, other=0.0).to(tl.float32)
+        skip = tl.load(skip_row_ptr + cols * stride_skip_col, mask=mask, other=0.0).to(tl.float32)
+
+        new_skip = attn * gate + skip
+        tl.store(new_skip_row_ptr + cols * stride_new_skip_col, new_skip, mask=mask)
+
+        gamma = tl.load(gamma_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+        if HAS_BETA:
+            beta = tl.load(beta_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+        else:
+            beta = 0.0
+
+        scale = tl.load(scale_row_ptr + cols * stride_scale_col, mask=mask, other=0.0).to(tl.float32)
+        shift = tl.load(shift_row_ptr + cols * stride_shift_col, mask=mask, other=0.0).to(tl.float32)
+
+        dt = tanh(new_skip * alpha) * gamma + beta
+        out = dt * (1.0 + scale) + shift
+
+        tl.store(out_row_ptr + cols * stride_out_col, out, mask=mask)
+
+def fused_gate_modulate_dyntanh(x_attn, gate_msa, x_skip, shift_mlp, scale_mlp, alpha, gamma, beta=None):
+    x_attn = x_attn.contiguous()
+    gate_msa = gate_msa.contiguous()
+    x_skip = x_skip.contiguous()
+    shift_mlp = shift_mlp.contiguous()
+    scale_mlp = scale_mlp.contiguous()
+
+    B, T, C = x_attn.shape
+    attn_flat = x_attn.view(-1, C)
+    skip_flat = x_skip.view(-1, C)
+
+    gate_flat = gate_msa.squeeze(1)
+    shift_flat = shift_mlp.squeeze(1)
+    scale_flat = scale_mlp.squeeze(1)
+
+    out = torch.empty_like(attn_flat)
+    new_skip = torch.empty_like(skip_flat)
+
+    n_rows = attn_flat.shape[0]
+    n_cols = attn_flat.shape[1]
+
+    _fused_gate_modulate_dyntanh_kernel[(n_rows,)](
+        attn_flat, gate_flat, skip_flat, shift_flat, scale_flat,
+        alpha, gamma, beta,
+        out, new_skip,
+        n_cols, T,
+        attn_flat.stride(0), attn_flat.stride(1),
+        gate_flat.stride(0), gate_flat.stride(1),
+        skip_flat.stride(0), skip_flat.stride(1),
+        shift_flat.stride(0), shift_flat.stride(1),
+        scale_flat.stride(0), scale_flat.stride(1),
+        out.stride(0), out.stride(1),
+        new_skip.stride(0), new_skip.stride(1),
+        HAS_BETA=(beta is not None),
+        BLOCK_SIZE=256
+    )
+    return out.view(B, T, C), new_skip.view(B, T, C)
+
+@triton.jit
+def tanh(x):
+    # Tanh is just a scaled sigmoid
+    return 2 * tl.sigmoid(2 * x) - 1
+
+class TritonDDiTDynTanh(nn.Module):
+    def __init__(self, config, layer_idx=0):
+        super().__init__()
+        self.adaLN_modulation = nn.Linear(config.cond_dim, 6 * config.n_embd, bias=True)
+        self.attn = SelfAttention(config)
+        self.mlp = MLP(config)
+
+        self.dt1_alpha = nn.Parameter(torch.ones(1))
+        self.dt1_gamma = nn.Parameter(torch.ones(config.n_embd))
+        if config.bias:
+            self.dt1_beta = nn.Parameter(torch.zeros(config.n_embd))
+        else:
+            self.register_parameter('dt1_beta', None)
+
+        self.dt2_alpha = nn.Parameter(torch.ones(1))
+        self.dt2_gamma = nn.Parameter(torch.ones(config.n_embd))
+        if config.bias:
+            self.dt2_beta = nn.Parameter(torch.zeros(config.n_embd))
+        else:
+            self.register_parameter('dt2_beta', None)
+
+    @torch.compile
+    def forward(self, x, c, freqs_cis: torch.Tensor):
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c)[:, None].chunk(6, dim=2)
+
+        x_skip = x
+        x_mod = fused_modulate_dyntanh(
+            x, shift_msa, scale_msa,
+            self.dt1_alpha, self.dt1_gamma, self.dt1_beta
+        )
+        x_attn = self.attn(x_mod, freqs_cis)
+
+        x_mod_2, x_skip = fused_gate_modulate_dyntanh(
+            x_attn, gate_msa, x_skip, shift_mlp, scale_mlp,
+            self.dt2_alpha, self.dt2_gamma, self.dt2_beta
+        )
 
         x_mlp_hidden = self.mlp.gelu(self.mlp.c_fc(x_mod_2))
         x_out = fused_mlp_proj_epilogue(x_mlp_hidden, self.mlp.c_proj.weight, gate_mlp, x_skip)
