@@ -147,20 +147,14 @@ def loss_function(
         sampling_eps=1e-3
     ) -> torch.Tensor:
     """
-    Computes the loss for a batch of data. Dispatches on `noise` type:
-      - MaskingNoise -> masked_ce_loss (MDLM-style CE on masked positions).
-      - GeometricNoise / LogLinearNoise -> score_entropy (SEDD substitution loss).
-
+    Computes the loss for a batch of data.
     Args:
-        model:          discrete diffusion model.
-        x0:             (B, L) LongTensor of original clean tokens.
-        noise:          a Noise instance (MaskingNoise, GeometricNoise, or LogLinearNoise).
-        sh:             StringHandler (provides vocab size and mask token id).
-        sampler:        optional Categorical over the data distribution; when provided,
-                        substitution noise samples replacements from it instead of uniform.
-        t:              (B,) float tensor with time steps in [0, 1]. If None, antithetic
-                        pairs (t, 1-t) are sampled uniformly.
-        sampling_eps:   small epsilon to avoid 0 or 1 time steps.
+        model:          discrete diffusion model
+        x0:             (B, L) Longtensor of original clean tokens.
+        noise:          a GeometricNoise instance
+        t:              (B,) float tensor with time steps in [0, 1]. If None, sampled uniformly.
+        x_t:            (B, L) int tensor with perturbed tokens. If None, generated on-the-fly.
+        sampling_eps:   float, small epsilon to avoid 0 or 1 time steps.
     Returns:
         loss:           scalar tensor with the loss.
     """
@@ -175,6 +169,8 @@ def loss_function(
     sigma_bar, sigma = noise(t)
 
     if isinstance(noise, MaskingNoise):
+        # Clamp masking probability to minimum 30% to ensure consistent training signal
+        sigma_bar = sigma_bar.clamp(min=0.30)
         fn = perturb_batch_with_masking(x0, sigma_bar[:, None], sh)
         loss = masked_ce_loss(model, x0, fn, sigma_bar, sh)
         return loss

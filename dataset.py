@@ -20,6 +20,17 @@ class StringHandler():
             self.meta['vocab_size'] += 1
         
         self.mask_token_id = self.meta['stoi'][mask_token_string]
+        
+        # Compute data distribution for realistic random-token masking
+        bin_path = os.path.join(data_dir, 'train.bin')
+        if os.path.isfile(bin_path):
+            data_arr = np.memmap(bin_path, dtype=np.uint16, mode='r')
+            counts = np.bincount(data_arr, minlength=self.meta['vocab_size'])
+            self.distribution = torch.from_numpy(counts).float()
+            self.distribution = self.distribution / self.distribution.sum()
+        else:
+            # Fallback to uniform if train.bin not found
+            self.distribution = torch.ones(self.meta['vocab_size']) / self.meta['vocab_size']
 
     def itos(self, idx):
         # We need to handle potential out-of-bounds index if meta file is not updated
@@ -160,6 +171,9 @@ def perturb_batch(batch: torch.Tensor, sigma_bar: torch.Tensor, sh: StringHandle
 def perturb_batch_with_masking(x0: torch.Tensor, sigma_bar: torch.Tensor, sh: StringHandler) -> torch.Tensor:
     """
     Perturbs a batch of data by replacing tokens with a [MASK] token.
+    Uses BERT-style mixed masking: 80% [MASK], 10% random token, 10% keep original.
+    This prevents the model from overfitting to the [MASK] token and provides
+    richer training signal at masked positions.
 
     Args:
         x0 (torch.Tensor): The original clean tokens (B, L).
@@ -171,10 +185,22 @@ def perturb_batch_with_masking(x0: torch.Tensor, sigma_bar: torch.Tensor, sh: St
     """
     # Get the ID for your [MASK] token
     mask_token_id = sh.mask_token_id
+    vocab_size = sh.get_vocab_size()
     rand_probs = torch.rand_like(x0, dtype=torch.float32)
     should_mask = rand_probs < sigma_bar
+
+    # BERT-style mixed masking: 80% [MASK], 10% random token, 10% keep original
+    rand_strategy = torch.rand_like(x0, dtype=torch.float32)
+    mask_replace = rand_strategy < 0.8
+    random_replace = (rand_strategy >= 0.8) & (rand_strategy < 0.9)
+    keep_replace = rand_strategy >= 0.9
+
     mask_tokens = torch.full_like(x0, fill_value=mask_token_id)
-    x_t = torch.where(should_mask, mask_tokens, x0)
+    random_tokens = torch.randint(0, vocab_size, x0.shape, device=x0.device)
+
+    x_t = torch.where(should_mask & mask_replace, mask_tokens, x0)
+    x_t = torch.where(should_mask & random_replace, random_tokens, x_t)
+    x_t = torch.where(should_mask & keep_replace, x0, x_t)
     return x_t
 
   
