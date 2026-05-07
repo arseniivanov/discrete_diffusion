@@ -78,6 +78,27 @@ def benchmark_full_model(config, idx, sigma):
     print(f"Eager Model:    {ms_full_pt:.4f} ms")
     print(f"Compiled Model: {ms_full_comp:.4f} ms")
 
+def profile_triton_component(config, x, c, freqs_cis):
+    print("\n--- NCU Profiling Pass: Triton Block ---")
+    if config.norm == 'dyntanh':
+        block_triton = TritonDDiTDynTanh(config).to(DEVICE).eval()
+    else:
+        block_triton = TritonDDiTBlock(config).to(DEVICE).eval()
+
+    # Triton JIT compilation is notoriously slow. Warm it up heavily.
+    with torch.no_grad():
+        for _ in range(10):
+            _ = block_triton(x, c, freqs_cis)
+            
+        torch.cuda.synchronize()
+        torch.cuda.profiler.start()
+        
+        with torch.cuda.nvtx.range("TritonKernelForward"):
+            _ = block_triton(x, c, freqs_cis)
+            torch.cuda.synchronize()
+            
+        torch.cuda.profiler.stop()
+
 @hydra.main(version_base=None, config_path="conf", config_name="base_config")
 def run_benchmark(cfg: DictConfig):
     device = DEVICE
@@ -98,12 +119,11 @@ def run_benchmark(cfg: DictConfig):
         x = torch.randn(batch_size, seq_len, config.n_embd, device=device)
         c = torch.randn(batch_size, config.cond_dim, device=device)
         freqs_cis = precompute_freqs_cis(config.n_embd // config.n_head, seq_len).to(device)
-        
+
+        #profile_triton_component(config, x, c, freqs_cis)
         benchmark_component(config, x, c, freqs_cis)
-        
         idx = torch.randint(0, config.vocab_size, (batch_size, seq_len), device=device)
         sigma = torch.rand(batch_size, device=device)
-        
         #benchmark_full_model(config, idx, sigma)
 
 if __name__ == "__main__":
