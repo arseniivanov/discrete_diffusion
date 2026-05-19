@@ -20,7 +20,6 @@ class StringHandler():
             self.meta['vocab_size'] += 1
         
         self.mask_token_id = self.meta['stoi'][mask_token_string]
-        
         # Compute data distribution for realistic random-token masking
         bin_path = os.path.join(data_dir, 'train.bin')
         if os.path.isfile(bin_path):
@@ -202,8 +201,6 @@ def perturb_batch_with_masking(x0: torch.Tensor, sigma_bar: torch.Tensor, sh: St
     x_t = torch.where(should_mask & random_replace, random_tokens, x_t)
     x_t = torch.where(should_mask & keep_replace, x0, x_t)
     return x_t
-
-  
 
 def print_wrapped(long_text, width=80, **kwargs):
     """

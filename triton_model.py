@@ -456,6 +456,81 @@ def fused_gate_modulate_dyntanh(x_attn, gate_msa, x_skip, shift_mlp, scale_mlp, 
     return out.view(B, T, C), new_skip.view(B, T, C)
 
 @triton.jit
+def _fused_linear_gelu_kernel(
+    a_ptr, b_ptr, c_ptr, bias_ptr,
+    M, N, K,
+    stride_am, stride_ak,
+    stride_bk, stride_bn,
+    stride_cm, stride_cn,
+    HAS_BIAS: tl.constexpr,
+    BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr, BLOCK_SIZE_K: tl.constexpr,
+    GROUP_SIZE_M: tl.constexpr,
+):
+    pid = tl.program_id(axis=0)
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_SIZE_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+    pid_m = first_pid_m + (pid % group_size_m)
+    pid_n = (pid % num_pid_in_group) // group_size_m
+
+    offs_am = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
+    offs_bn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
+    offs_k = tl.arange(0, BLOCK_SIZE_K)
+    
+    a_ptrs = a_ptr + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)
+    b_ptrs = b_ptr + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
+
+    accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+    for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
+        a = tl.load(a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_SIZE_K, other=0.0)
+        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0)
+        accumulator += tl.dot(a, b)
+        a_ptrs += BLOCK_SIZE_K * stride_ak
+        b_ptrs += BLOCK_SIZE_K * stride_bk
+
+    c = accumulator.to(tl.float32)
+    offs_m = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+    offs_n = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+
+    if HAS_BIAS:
+        bias = tl.load(bias_ptr + offs_n, mask=offs_n < N, other=0.0)
+        c += bias[None, :]
+
+    # In-register exact GELU (Matches nn.GELU default)
+    c = c * 0.5 * (1.0 + tl.math.erf(c * 0.707106781))
+    
+    c = c.to(tl.bfloat16)
+    c_ptrs = c_ptr + stride_cm * offs_m[:, None] + stride_cn * offs_n[None, :]
+    tl.store(c_ptrs, c, mask=mask)
+
+def fused_linear_gelu(x, weight, bias=None):
+    x = x.contiguous()
+    B, T, C_in = x.shape
+    C_out = weight.shape[0]
+    M, K = B * T, C_in
+    N = C_out
+
+    x_flat = x.view(M, K)
+    out_flat = torch.empty((M, N), device=x.device, dtype=x.dtype)
+
+    grid = lambda META: (cdiv(M, META['BLOCK_SIZE_M']) * cdiv(N, META['BLOCK_SIZE_N']), )
+    _fused_linear_gelu_kernel[grid](
+        x_flat, weight.t(), out_flat, bias,
+        M, N, K,
+        x_flat.stride(0), x_flat.stride(1),
+        weight.t().stride(0), weight.t().stride(1),
+        out_flat.stride(0), out_flat.stride(1),
+        HAS_BIAS=(bias is not None),
+        BLOCK_SIZE_M=128, BLOCK_SIZE_N=128, BLOCK_SIZE_K=32,
+        GROUP_SIZE_M=8
+    )
+    return out_flat.view(B, T, N)
+
+@triton.jit
 def tanh(x):
     # Tanh is just a scaled sigmoid
     return 2 * tl.sigmoid(2 * x) - 1
@@ -497,6 +572,6 @@ class TritonDDiTDynTanh(nn.Module):
             self.dt2_alpha, self.dt2_gamma, self.dt2_beta
         )
 
-        x_mlp_hidden = self.mlp.gelu(self.mlp.c_fc(x_mod_2))
+        x_mlp_hidden = fused_linear_gelu(x_mod_2, self.mlp.c_fc.weight, self.mlp.c_fc.bias)
         x_out = fused_mlp_proj_epilogue(x_mlp_hidden, self.mlp.c_proj.weight, gate_mlp, x_skip)
         return x_out

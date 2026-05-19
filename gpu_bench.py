@@ -15,18 +15,17 @@ def execute_full_model_profile_pass(config, idx, sigma, target="compile"):
         
     with torch.no_grad():
         # JIT and hardware warmup
-        for _ in range(3):
+        for _ in range(10):
             _ = model(idx, sigma)
             
         torch.cuda.synchronize()
-        torch.cuda.cudart().cudaProfilerStart()
-        torch.cuda.nvtx.range_push("FullModelForward")
-        
-        _ = model(idx, sigma)
-        
-        torch.cuda.nvtx.range_pop()
-        torch.cuda.cudart().cudaProfilerStop()
-        torch.cuda.synchronize()
+        torch.cuda.profiler.start()
+
+        with torch.cuda.nvtx.range("FullModelForward"):
+            _ = model(idx, sigma)
+            torch.cuda.synchronize()
+            
+        torch.cuda.profiler.stop()
 
 @hydra.main(version_base=None, config_path="conf", config_name="base_config")
 def run_profile(cfg):
