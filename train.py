@@ -8,7 +8,7 @@ from torch.distributions import Categorical
 from dataset import get_data_loader, StringHandler, print_wrapped, decode
 from model import GPT, GeometricNoise, GPTConfig, LogLinearNoise, MaskingNoise
 import torch.optim as optim
-from losses import loss_function, flow_loss
+from losses import loss_function
 import os
 from inference_helpers import sample_masking, sample_substitution, sample_discrete_flow
 from tqdm import tqdm
@@ -173,7 +173,7 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
             for batch in val_dataloader:
                 batch = batch.to(device)
                 # The same loss function you use for training
-                loss = loss_function(model, batch, noise, sh, sampler=None) 
+                loss = loss_function(model, batch, noise, sh, sampler=sampler) 
                 total_val_loss += loss.item()
 
         avg_val_loss = total_val_loss / len(val_dataloader)
@@ -197,7 +197,7 @@ def run_training(cfg: DictConfig, model, noise, sh, device, train_dataloader, da
     with torch.no_grad():
         for batch in val_dataloader:
             batch = batch.to(device)
-            loss = loss_function(ema_model, batch, noise, sh, sampler=None)
+            loss = loss_function(ema_model, batch, noise, sh, sampler=sampler)
             total_ema_val_loss += loss.item()
     avg_ema_val_loss = total_ema_val_loss / len(val_dataloader)
     with open(val_loss_log_path, 'a') as f:

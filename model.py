@@ -29,35 +29,6 @@ class DynTanh(nn.Module):
             out = out + self.beta
         return out
 
-
-class PolyDynTanh(nn.Module):
-    """
-    Polynomial DynTanh: replaces torch.tanh with a 7th-order Taylor polynomial
-    written in Horner form so torch.compile can lower it to FMA instructions.
-    """
-    def __init__(self, dim, bias=True):
-        super().__init__()
-        self.alpha = nn.Parameter(torch.ones(1))
-        self.gamma = nn.Parameter(torch.ones(dim))
-        if bias:
-            self.beta = nn.Parameter(torch.zeros(dim))
-        else:
-            self.register_parameter('beta', None)
-
-    def forward(self, x):
-        a = self.alpha * x
-        a2 = a * a
-        # 7th-order Taylor series for tanh in Horner form (FMA-friendly)
-        # tanh(a) ≈ a * (1 + a2 * (-1/3 + a2 * (2/15 + a2 * (-17/315))))
-        p = a * (1.0 + a2 * (-0.3333333333 + a2 * (0.1333333333 + a2 * (-0.053968254))))
-        # Hard clamp to [-1, 1] to avoid polynomial divergence for large inputs
-        p = torch.clamp(p, -1.0, 1.0)
-        out = p * self.gamma
-        if self.beta is not None:
-            out = out + self.beta
-        return out
-
-
 def precompute_freqs_cis(head_dim: int, max_seq_len: int, theta: float = 500.0) -> torch.Tensor:
     freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
     t = torch.arange(max_seq_len)
@@ -402,21 +373,21 @@ class GPT(nn.Module):
         tok_emb = self.transformer.wte(idx)  # (b, t, n_embd)
         tok_emb = tok_emb + self.local_conv(tok_emb.transpose(1, 2)).transpose(1, 2)
         tok_emb = tok_emb + self.local_conv2(F.silu(tok_emb).transpose(1, 2)).transpose(1, 2)
-        reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
-        x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
-        x = x + self.sigma_in(c).unsqueeze(1)          # sigma-conditioned global bias
+        #reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
+        #x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
+        x = tok_emb + self.sigma_in(c).unsqueeze(1)          # sigma-conditioned global bias
         x = self.transformer.drop(x)
         n_reg = self.n_registers
         freqs_cis = self.freqs_cis[:n_reg + t]
         for i, block in enumerate(self.transformer.h):
             x = block(x, c, freqs_cis)
-            x = x + self.block_convs[i](x.transpose(1, 2)).transpose(1, 2)
-            x = x + self.block_convs2[i](F.silu(x).transpose(1, 2)).transpose(1, 2)
-        x = x[:, n_reg:]  # strip registers before output
+            #x = x + self.block_convs[i](x.transpose(1, 2)).transpose(1, 2)
+            #x = x + self.block_convs2[i](F.silu(x).transpose(1, 2)).transpose(1, 2)
+        #x = x[:, n_reg:]  # strip registers before output
         x = self.transformer.ln_f(x)
 
         x = self.lm_head(x, c)
-        x = x + self.sigma_out(c).unsqueeze(1)  # direct sigma→logit bias (b,1,vocab) → broadcasts
+        #x = x + self.sigma_out(c).unsqueeze(1)  # direct sigma→logit bias (b,1,vocab) → broadcasts
         x = torch.scatter(x, -1, idx[..., None], torch.zeros_like(x[..., :1]))
 
         return x
