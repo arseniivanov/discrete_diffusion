@@ -22,6 +22,7 @@ hydra-core = "*"
 
 [pypi-dependencies]
 flash-linear-attention = "*"
+nvidia-cutlass-dsl = "==4.5.1"
 
 [tasks]
 install = "pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128"

@@ -348,15 +348,15 @@ class GPT(nn.Module):
         tok_emb = self.transformer.wte(idx)  # (b, t, n_embd)
         tok_emb = tok_emb + self.local_conv(tok_emb.transpose(1, 2)).transpose(1, 2)
         tok_emb = tok_emb + self.local_conv2(F.silu(tok_emb).transpose(1, 2)).transpose(1, 2)
-        reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
-        x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
-        x = x + self.sigma_in(c).unsqueeze(1)          # sigma-conditioned global bias
+        #reg = self.register_tokens.expand(b, -1, -1)  # (b, n_reg, n_embd)
+        #x = torch.cat([reg, tok_emb], dim=1)           # (b, n_reg+t, n_embd)
+        x = tok_emb + self.sigma_in(c).unsqueeze(1)          # sigma-conditioned global bias
         x = self.transformer.drop(x)
-        n_reg = self.n_registers
-        freqs_cis = self.freqs_cis[:n_reg + t]
+        #n_reg = self.n_registers
+        freqs_cis = self.freqs_cis[:t]
         for block in self.transformer.h:
             x = block(x, c, freqs_cis)
-        x = x[:, n_reg:]  # strip registers before output
+        #x = x[:, n_reg:]  # strip registers before output
         x = self.transformer.ln_f(x)
 
         x = self.lm_head(x, c)
