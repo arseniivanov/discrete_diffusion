@@ -901,10 +901,10 @@ def _fused_depthwise_convs_kernel(
     conv1_0  = x_m1 * w1_0 + x_0  * w1_1 + x_p1 * w1_2 + b1
     conv1_p1 = x_0  * w1_0 + x_p1 * w1_1 + x_p2 * w1_2 + b1
 
-    # Residual after conv1
-    inter_m1 = x_m1 + conv1_m1
+    # Residual after conv1 (zero out OOB positions so they don't leak into conv2)
+    inter_m1 = tl.where(t_m1 >= 0, x_m1 + conv1_m1, 0.0)
     inter_0  = x_0  + conv1_0
-    inter_p1 = x_p1 + conv1_p1
+    inter_p1 = tl.where(t_p1 < T, x_p1 + conv1_p1, 0.0)
 
     # SiLU
     silu_m1 = inter_m1 * tl.sigmoid(inter_m1)

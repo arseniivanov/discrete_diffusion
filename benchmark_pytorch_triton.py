@@ -14,6 +14,10 @@ from triton_model import (
     fused_linear_gelu, fused_mlp_proj_epilogue, fused_mlp_full,
     triton_layernorm, triton_dyntanh,
 )
+from cutedsl_model import (
+    cute_fused_modulate_dyntanh,
+    cute_fused_depthwise_convs,
+)
 from dataset import StringHandler
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -41,12 +45,17 @@ def print_and_collect(fmt, *args, results=None):
 # ---------------------------------------------------------------------------
 def benchmark_pre_attn_norm(config, x, shift_msa, scale_msa, block_pt, results):
     print_and_collect("\n=== Pre-Attention Norm + Modulate ===", results=results)
+    cute_fn = None
     if config.norm == 'dyntanh':
         eager_fn = lambda x: modulate(block_pt.ln_1(x), shift_msa, scale_msa)
         triton_fn = lambda x: fused_modulate_dyntanh(x, shift_msa, scale_msa,
                                                      block_pt.ln_1.alpha,
                                                      block_pt.ln_1.gamma,
                                                      block_pt.ln_1.beta)
+        cute_fn = lambda x: cute_fused_modulate_dyntanh(x, shift_msa, scale_msa,
+                                                        block_pt.ln_1.alpha,
+                                                        block_pt.ln_1.gamma,
+                                                        block_pt.ln_1.beta)
     else:
         eager_fn = lambda x: modulate(block_pt.ln_1(x), shift_msa, scale_msa)
         triton_fn = lambda x: fused_modulate_layernorm(x, shift_msa, scale_msa)
@@ -58,27 +67,40 @@ def benchmark_pre_attn_norm(config, x, shift_msa, scale_msa, block_pt, results):
             _ = eager_fn(x)
             _ = compiled_fn(x)
             _ = triton_fn(x)
+            if cute_fn is not None:
+                _ = cute_fn(x)
 
         out_pt = eager_fn(x).to(torch.bfloat16)
         out_comp = compiled_fn(x).to(torch.bfloat16)
         out_triton = triton_fn(x).to(torch.bfloat16)
+        if cute_fn is not None:
+            out_cute = cute_fn(x).to(torch.bfloat16)
 
         err_comp = (out_comp - out_pt).abs().max().item()
         err_triton = (out_triton - out_pt).abs().max().item()
         print_and_collect("Max Abs Error (Compile vs Eager): %.6f", err_comp, results=results)
         print_and_collect("Max Abs Error (Triton vs Eager):  %.6f", err_triton, results=results)
+        if cute_fn is not None:
+            err_cute = (out_cute - out_pt).abs().max().item()
+            print_and_collect("Max Abs Error (Cute vs Eager):    %.6f", err_cute, results=results)
         torch.testing.assert_close(out_comp, out_pt, atol=5e-2, rtol=2e-2)
         torch.testing.assert_close(out_triton, out_pt, atol=5e-2, rtol=2e-2)
+        if cute_fn is not None:
+            torch.testing.assert_close(out_cute, out_pt, atol=5e-2, rtol=2e-2)
         print_and_collect("Correctness verified.", results=results)
 
     with torch.no_grad():
         ms_pt = triton.testing.do_bench(lambda: eager_fn(x))
         ms_comp = triton.testing.do_bench(lambda: compiled_fn(x))
         ms_triton = triton.testing.do_bench(lambda: triton_fn(x))
+        if cute_fn is not None:
+            ms_cute = triton.testing.do_bench(lambda: cute_fn(x))
 
     print_and_collect("Eager Component:    %.4f ms", ms_pt, results=results)
     print_and_collect("Compiled Component: %.4f ms", ms_comp, results=results)
     print_and_collect("Triton Component:   %.4f ms", ms_triton, results=results)
+    if cute_fn is not None:
+        print_and_collect("Cute Component:     %.4f ms", ms_cute, results=results)
     return out_pt
 
 # ---------------------------------------------------------------------------
@@ -352,6 +374,8 @@ def benchmark_input_convs(config, tok_emb, results):
     def triton_fn(x):
         return fused_input_convs(x, w1, b1, w2, b2)
 
+    cute_fn = lambda x: cute_fused_depthwise_convs(x, w1, b1, w2, b2)
+
     compiled_fn = torch.compile(eager_fn)
 
     with torch.no_grad():
@@ -359,27 +383,34 @@ def benchmark_input_convs(config, tok_emb, results):
             _ = eager_fn(tok_emb)
             _ = compiled_fn(tok_emb)
             _ = triton_fn(tok_emb)
+            _ = cute_fn(tok_emb)
 
         out_pt = eager_fn(tok_emb).to(torch.bfloat16)
         out_comp = compiled_fn(tok_emb).to(torch.bfloat16)
         out_triton = triton_fn(tok_emb).to(torch.bfloat16)
+        out_cute = cute_fn(tok_emb).to(torch.bfloat16)
 
         err_comp = (out_comp - out_pt).abs().max().item()
         err_triton = (out_triton - out_pt).abs().max().item()
+        err_cute = (out_cute - out_pt).abs().max().item()
         print_and_collect("Max Abs Error (Compile vs Eager): %.6f", err_comp, results=results)
         print_and_collect("Max Abs Error (Triton vs Eager):  %.6f", err_triton, results=results)
+        print_and_collect("Max Abs Error (Cute vs Eager):    %.6f", err_cute, results=results)
         torch.testing.assert_close(out_comp, out_pt, atol=5e-2, rtol=2e-2)
         torch.testing.assert_close(out_triton, out_pt, atol=5e-2, rtol=2e-2)
+        torch.testing.assert_close(out_cute, out_pt, atol=5e-2, rtol=2e-2)
         print_and_collect("Correctness verified.", results=results)
 
     with torch.no_grad():
         ms_pt = triton.testing.do_bench(lambda: eager_fn(tok_emb))
         ms_comp = triton.testing.do_bench(lambda: compiled_fn(tok_emb))
         ms_triton = triton.testing.do_bench(lambda: triton_fn(tok_emb))
+        ms_cute = triton.testing.do_bench(lambda: cute_fn(tok_emb))
 
     print_and_collect("Eager Component:    %.4f ms", ms_pt, results=results)
     print_and_collect("Compiled Component: %.4f ms", ms_comp, results=results)
     print_and_collect("Triton Component:   %.4f ms", ms_triton, results=results)
+    print_and_collect("Cute Component:     %.4f ms", ms_cute, results=results)
 
 
 # ---------------------------------------------------------------------------
