@@ -1,4 +1,6 @@
-import os
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+
 import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf

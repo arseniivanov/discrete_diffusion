@@ -1,6 +1,9 @@
 import subprocess
 import sys
+import os
 from datetime import datetime
+
+_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 
 def run_experiment(config_name: str):
     """
@@ -12,8 +15,8 @@ def run_experiment(config_name: str):
     
     # Construct the command to run train.py with Hydra's config_name override
     command = [
-        sys.executable,        # Path to the current python interpreter
-        "train.py",            # The script to execute
+        sys.executable,
+        os.path.join(_ROOT, "train.py"),
         f"--config-name={config_name}" # The specific config file to use
     ]
     

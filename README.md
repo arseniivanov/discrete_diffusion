@@ -24,7 +24,7 @@ Total parameters: **< 6.5 M** on 3080Ti.
 
 The video below shows iterative confidence-based unmasking during inference (MaskGIT-style): the model starts from a fully masked sequence and progressively reveals the most confident tokens.
 
-<video src="diffusion_video.webm" controls width="720"></video>
+![Iterative unmasking demo](diffusion_video.gif)
 
 ---
 
@@ -82,7 +82,7 @@ python train.py -m --config-name sweep_muon_masking
 
 ## Ablation Results
 
-The table below traces the ablation journey from the initial baseline to the final best configuration. See [worklog.md](worklog.md) for the full experiment log (~105 experiments).
+The table below traces the ablation journey from the initial baseline to the final best configuration. See [autoresearch/worklog.md](autoresearch/worklog.md) for the full experiment log (~105 experiments).
 
 Note that the ablation results were done with a more naive BERT-based CE-loss that did not consider the dependency between diffused tokens. This leads to "better" looking output, but is inherently independent
 
@@ -130,7 +130,7 @@ Runtime on a single RTX 5080 Ti: **~5 minutes** for 2 epochs.
 | `inference_helpers.py` | Masking, substitution |
 | `run_eval.py` | Qualitative benchmark |
 | `conf/base_config.yaml` | Hydra configuration |
-| `worklog.md` | Full autoresearch ablation experiment log |
+| `autoresearch/worklog.md` | Full autoresearch ablation experiment log |
 
 ---
 
@@ -146,6 +146,6 @@ AI assistance (Claude) was used in the following capacities:
 
 - **Bug fixing** — diagnosing and correcting training instabilities, dtype mismatches, and memory issues.
 - **Plot code generation** — producing visualization scripts for loss curves, profiling outputs, and experiment comparisons.
-- **Autoresearch ablation** — running the autonomous research loop (`CLAUDE.md` protocol) to systematically explore hyperparameter and architecture changes, logging results in `worklog.md`.
+- **Autoresearch ablation** — running the autonomous research loop (`CLAUDE.md` protocol) to systematically explore hyperparameter and architecture changes, logging results in `autoresearch/worklog.md`.
 
 All suggested model design decisions, experiment hypotheses, and final configuration choices were verified by the author.

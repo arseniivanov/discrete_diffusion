@@ -1,4 +1,9 @@
 # benchmark_pytorch_triton.py
+import sys, os
+_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.join(_ROOT, 'cutedsl'))
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -578,7 +583,7 @@ def run_component_benchmarks(config, x, c, freqs_cis, idx, sigma):
 
     return "\n".join(results)
 
-@hydra.main(version_base=None, config_path="conf", config_name="base_config")
+@hydra.main(version_base=None, config_path="../conf", config_name="base_config")
 def run_benchmark(cfg: DictConfig):
     device = DEVICE
     batch_size = cfg.data.batch_size

@@ -7,7 +7,7 @@ import textwrap
 
 class StringHandler():
     def __init__(self):
-        data_dir = './shakespeare_char/'
+        data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'shakespeare_char')
         meta_path = os.path.join(data_dir, 'meta.pkl')
         with open(meta_path, 'rb') as f:
             self.meta = pickle.load(f)
