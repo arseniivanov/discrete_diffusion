@@ -24,6 +24,8 @@ Total parameters: **< 6.5 M** on 3080Ti.
 
 The video below shows iterative confidence-based unmasking during inference (MaskGIT-style): the model starts from a fully masked sequence and progressively reveals the most confident tokens.
 
+The demo is run on the 3-layer model that is trained for 6 minutes on the 3080Ti, so the text itself is not very coherent.
+
 ![Iterative unmasking demo](diffusion_video.gif)
 
 ---
@@ -82,6 +84,8 @@ python train.py -m --config-name sweep_muon_masking
 
 ## Ablation Results
 
+As a part of the Claude Code evaluation at my department, I decided to let the agents run in an ablation loop, doing something similar to Autoresearch by Andrei Karpathy.
+
 The table below traces the ablation journey from the initial baseline to the final best configuration. See [autoresearch/worklog.md](autoresearch/worklog.md) for the full experiment log (~105 experiments).
 
 Note that the ablation results were done with a more naive BERT-based CE-loss that did not consider the dependency between diffused tokens. This leads to "better" looking output, but is inherently independent
@@ -131,6 +135,20 @@ Runtime on a single RTX 5080 Ti: **~5 minutes** for 2 epochs.
 | `run_eval.py` | Qualitative benchmark |
 | `conf/base_config.yaml` | Hydra configuration |
 | `autoresearch/worklog.md` | Full autoresearch ablation experiment log |
+
+---
+
+## Performance Tuning
+
+Beyond architecture search, the model's forward pass was optimized at the kernel level using `torch.compile` and custom [Triton](https://triton-lang.org/) kernels (see `triton/`). Benchmarked on the 6.47 M parameter model on the 3080Ti:
+
+| Backend | Latency | Speedup |
+|---|---|---|
+| Eager (PyTorch) | 32.9 ms | 1.00× |
+| `torch.compile` | 20.8 ms | 1.58× |
+| Triton (custom kernels) | 18.2 ms | 1.81× |
+
+![Benchmark results](benchmark_results.png)
 
 ---
 
