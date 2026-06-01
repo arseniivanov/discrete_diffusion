@@ -1,6 +1,6 @@
 # Discrete Diffusion for Character-Level Text Generation
 
-A discrete diffusion language model trained on Tiny Shakespeare at the character level. The model uses a DiT-style transformer backbone with adaptive layer normalization (adaLN) conditioned on a noise-level embedding, trained under a masking noise process similar to BERT, but with a diffusion-based conditioning variable t.
+A discrete diffusion language model trained on Tiny Shakespeare at the character level. The model uses a DiT-style transformer backbone with adaptive layer normalization (adaLN) conditioned on a noise-level embedding, trained under a masking noise process similar to BERT, but with a diffusion-based conditioning variable sigma.
 
 ---
 
@@ -118,6 +118,8 @@ That he is no more that mame
 ```
 
 Runtime on a single RTX 5080 Ti: **~5 minutes** for 2 epochs.
+
+Below is an image of the autoresearch progress for the validation loss reduction by various tweaks.
 
 ![Optimization progress across all experiments](optimization_plot_standard_fixed.png)
 
