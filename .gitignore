@@ -213,3 +213,8 @@ runs
 multirun
 
 outputs
+short_paper/*.aux
+short_paper/*.bbl
+short_paper/*.blg
+short_paper/*.log
+short_paper/*.out
