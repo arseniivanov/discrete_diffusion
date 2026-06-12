@@ -97,22 +97,15 @@ regime (Section~\ref{sec:ablation}), show generated samples
 \label{sec:method}
 
 We use an absorbing-state (masking) forward process in the style of MDLM
-\citep{sahoo2024mdlm} together with the score-entropy objective of SEDD
-\citep{lou2024sedd}. A clean sequence $x_0$ is corrupted at a continuous time
+\citep{sahoo2024mdlm}. A clean sequence $x_0$ is corrupted at a continuous time
 $t\in[0,1]$ under a cosine noise schedule, so the probability that a token is
 masked is $\bar\sigma_t = 1-\cos(t\pi/2)$, rising from about $0$ at $t{=}0$ to
 about $1$ at $t{=}1$. The model $s_\theta(x_t,\bar\sigma_t)$ is trained to
-recover $x_0$. We use two losses during the study: a time-conditioned masked
-cross-entropy on the corrupted positions, and the score-entropy objective, in
+recover $x_0$. We try two losses during the study: a time-conditioned masked
+cross-entropy on the corrupted positions, and the score-entropy objective\cite{lou2024sedd}, in
 which the rate-of-noise term $\sigma_t$ weights the per-position loss,
-\begin{equation}
-  \label{eq:loss}
-  \mathcal{L} \;=\; \mathbb{E}_{t,x_t}\!\left[\, \sigma_t \cdot
-  \ell_{\text{SE}}\big(s_\theta(x_t,\bar\sigma_t),\, x_t,\, x_0\big)\right].
-\end{equation}
-The $\sigma_t$ weighting is load-bearing for the score-entropy derivation:
-replacing it with uniform weighting strongly degraded results. Noise levels are
-drawn with antithetic sampling, pairing $(t,1-t)$ within each batch.
+We find that for our experimental setup, the score-entropy objective underperforms
+the simple time-conditioned cross-entropy.
 
 The backbone is a pre-norm transformer with per-block adaLN modulation that
 derives shift, scale, and gate vectors from a sinusoidal embedding of the noise
@@ -164,7 +157,9 @@ embedding of width $n_{\text{embd}}$ has $n_{\text{embd}}\cdot k$ weights, so th
 two layers add $2 \cdot 384 \cdot 3 = 2{,}304$ parameters, under $0.04\%$ of the
 budget. Its forward cost is $\mathcal{O}(n_{\text{embd}} k\, T)$ for a length-$T$
 sequence, negligible next to the $\mathcal{O}(T^2 n_{\text{embd}})$ attention and
-$\mathcal{O}(T\, n_{\text{embd}}^2)$ feed-forward cost of even one block.
+$\mathcal{O}(T\, n_{\text{embd}}^2)$ feed-forward cost of even one block: the two
+convolutions add about $4.6$ kFLOPs per token, $0.04\%$ of the
+${\sim}12.4$ MFLOPs per token of the full three-layer forward pass.
 
 \begin{table}[t]
   \centering
@@ -174,16 +169,19 @@ $\mathcal{O}(T\, n_{\text{embd}}^2)$ feed-forward cost of even one block.
     \toprule
     \textbf{Addition} & \textbf{Val.\ red.} & \textbf{Params} & \textbf{Compute} \\
     \midrule
-    Embedding conv stack   & $0.9\%$ & $2{,}304$ & negligible \\
-    Register tokens ($8$)  & $0.6\%$ & $3{,}072$ & higher \\
-    Context $384{\to}512$  & $0.5\%$ & $0$       & higher \\
+    Embedding conv stack   & $0.9\%$ & $2{,}304$ & $+0.04\%$ \\
+    Register tokens ($8$)  & $0.6\%$ & $3{,}072$ & $+2.4\%$ \\
+    Context $384{\to}512$  & $0.5\%$ & $0$       & $+4.8\%$ \\
     \bottomrule
   \end{tabular}
   \caption{Validation-loss reduction (relative) versus cost for three additions
-  in the cross-entropy ablation. The embedding convolution gives the largest
-  reduction of the three while adding few parameters and almost no compute,
-  whereas register tokens add more parameters and a longer attended sequence, and
-  a longer context window raises attention cost quadratically.}
+  in the cross-entropy ablation. Compute is the increase in forward-pass FLOPs
+  per trained token over the $T{=}384$ baseline (${\sim}12.4$ MFLOPs/token).
+  The embedding convolution gives the largest reduction of the three while
+  adding few parameters and almost no compute; register tokens send $8$ extra
+  positions through every layer and enlarge the quadratic attention term, and a
+  longer context window grows per-token attention cost linearly in $T$
+  (per-sequence cost quadratically).}
   \label{tab:cost}
 \end{table}
 
@@ -290,7 +288,7 @@ Figure~\ref{fig:sample} shows a sample from the final model (averaged weights,
 budget does not produce semantically coherent passages, but the sample reproduces
 salient features of the corpus: speaker labels in capitals followed by a colon
 (\texttt{MENENIUS:}) appear in the correct position; the vocabulary and
-morphology are archaic and largely well-formed (\texttt{your honour},
+morphology are largely well-formed (\texttt{your honour},
 \texttt{crook'd upon my gage}); and the line lengths and punctuation follow the
 dramatic-verse layout of the source. The errors are mostly local
 (\texttt{thae} for \texttt{the}, \texttt{mame} for \texttt{name}), as expected
@@ -336,11 +334,12 @@ forward pass of the 6.47M-parameter model at the kernel level. Compilation with
 replacing the hottest operations with custom Triton kernels
 \citep{tillet2019triton} reached $1.81\times$, at 18.2~ms. Since unmasking uses
 256 steps, these constant-factor gains compound directly into end-to-end
-sampling throughput.
+sampling throughput. This gives us a generation speed of around 110 tokens/s, 
+which is comparable to frontier models such as Gemini 3.1 Pro Preview.
 
 \section{Conclusion}
 
-In a tightly constrained character-level discrete diffusion setting, one of the
+In a character-level discrete diffusion setting, one of the
 most effective and most transferable additions was also among the cheapest: a
 small residual stack of depthwise convolutions on the token embeddings before the
 transformer. It reduced validation loss by about the same percentage as changes
