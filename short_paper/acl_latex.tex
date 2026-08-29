@@ -40,20 +40,7 @@ fully corrupted sequence in parallel, avoiding the sequential bottleneck of
 autoregressive decoding. We study a compact character-level discrete diffusion
 model (under 6.5M parameters) built on a DiT-style transformer and trained on
 the Tiny Shakespeare corpus under a fixed two-epoch budget on a single 16~GB
-GPU. Using an autonomous search of roughly 105 controlled experiments, we
-examine which architectural and optimization choices reduce validation loss in
-this constrained regime. Our main result is that applying a small stack of
-depthwise convolutions to the token embeddings, before the transformer, improves
-the model at very low cost: the two convolutions add about 2{,}300 parameters
-and a negligible amount of computation, yet they reduce validation loss by about
-the same percentage as changes that require many more parameters or much more
-compute, and they noticeably improve the quality of generated text. We also
-report the broader ablation, covering positional encoding, locality bias,
-noise-level conditioning, optimizer and schedule choices, and weight averaging,
-together with larger techniques (mixture-of-experts, linear attention, gated
-feed-forwards, sharpness-aware minimization) that did not help in this shallow,
-short-budget setting, and we close with a forward-pass kernel optimization that
-reaches a $1.81\times$ speedup.
+GPU. Using roughly 105 controlled experiments, we study architectural and optimization choices in this constrained regime. Our main architectural result is that a small stack of depthwise convolutions on the token embeddings provides a useful local inductive bias at negligible cost, improving both validation loss and qualitative output. Established optimization techniques, particularly exponential weight averaging, provide gains of comparable magnitude. We therefore emphasize the convolution as a cost-effective and less explored architectural intervention rather than as the dominant source of overall improvement. We also report negative results for several larger architectural techniques and a forward-pass kernel optimization reaching a 1.81× speedup.
 \end{abstract}
 
 \section{Introduction}
@@ -71,27 +58,29 @@ trade-off through the number of denoising steps. Recent work has scaled this
 paradigm to billions of parameters \citep{nie2025llada,arriola2025block}, but
 the inductive biases that make small such models train well remain understudied.
 
-This paper reports a systematic study of a tiny character-level discrete
-diffusion model. We adopt the nanoGPT \citep{karpathy2022nanogpt} backbone,
-modernize it into a diffusion transformer (DiT) \citep{peebles2023dit}
-conditioned on the noise level through adaptive layer normalization (adaLN),
-and train it on Tiny Shakespeare at the character level under fixed hardware
-constraints (a single RTX~5080~Ti, 16~GB; at most 3 layers, 2 heads, embedding
-width 384, and batch size at most 512). Every configuration is evaluated by the
-same standardized two-epoch benchmark, so validation loss is directly comparable
-across experiments. The search was run as an autonomous loop: an agent proposes
-one testable hypothesis, implements it, runs the benchmark, and commits the
-change only if validation loss improves, reverting it otherwise.
+This paper studies a small character-level discrete diffusion model under fixed
+hardware and training constraints. We chose discrete diffusion as the research
+direction because parallel denoising removes the strict token-by-token dependency
+of autoregressive decoding, offering a route toward greater generation throughput
+as decoding becomes increasingly memory-bound. We use a nanoGPT
+\citep{karpathy2022nanogpt} backbone adapted into a diffusion transformer (DiT)
+\citep{peebles2023dit} with noise-conditioned adaptive layer normalization
+(adaLN), and evaluate every configuration using the same standardized two-epoch
+benchmark.
 
-Our central finding from roughly 105 logged experiments is that one of the most
-favourable changes is also one of the cheapest: a small stack of depthwise
-convolutions applied to the token embeddings before the transformer improves the
-model at very low parameter and compute cost, and also improves the qualitative
-output (Section~\ref{sec:conv}). We additionally report a broad ablation over
-architecture and optimization, including techniques that did not help in this
-regime (Section~\ref{sec:ablation}), show generated samples
-(Section~\ref{sec:samples}), and report a forward-pass kernel optimization
-(Section~\ref{sec:perf}).
+The research direction, experimental constraints, model family, and overall
+experimental framing were chosen by the author. The search then explored both
+established ideas from the transformer and optimization literature including
+RoPE, ALiBi, QK normalization, learning-rate scheduling, and weight
+averaging as well as architectural variants proposed during the autonomous loop.
+The agent proposed and implemented individual experiments, ran the standardized
+benchmark, and retained changes that improved validation loss. The embedding
+convolution emerged from this process as an especially interesting architectural
+result: its benefit is consistent with the strong short-range structure of
+character-level text, where a cheap local operator can complement the global
+mixing of attention during parallel denoising. Roughly 105 experiments were
+logged; Section~\ref{sec:conv} discusses this result and
+Section~\ref{sec:ablation} the broader ablation.
 
 \section{Model and Training Setup}
 \label{sec:method}
@@ -241,9 +230,7 @@ actually help in this regime.
     \bottomrule
   \end{tabular}
   \caption{Cumulative milestones of the autonomous search on the cross-entropy
-  ablation path, with reduction relative to the baseline. The convolution row
-  aggregates input and per-block experiments; the final model retains only the
-  input stack (Section~\ref{sec:conv}).}
+  ablation path, with reduction relative to the baseline. Note that the improvements are dependent/aggregate.}
   \label{tab:milestones}
 \end{table}
 
@@ -272,13 +259,9 @@ dense feed-forward capacity is not recovered. Sharpness-aware minimization
 weight averaging \citep{izmailov2018swa} underperformed the exponential moving
 average, because the model is still improving monotonically, so any equal-weight
 window over snapshots includes worse early ones; and span masking broke the
-per-token independence assumed by the score-entropy derivation. A consistent
-lesson is that the model sits in a deep local optimum for the budget, and that
-weight averaging, rather than any single architectural trick, is the dominant
-source of final-model generalization. The milestone path used the masked
-cross-entropy loss, which yields lower numbers than score-entropy (whose final
-loss is about 0.82 with weight averaging); the ranking of changes, and the
-convolution result in particular, was consistent across both.
+per-token independence assumed by the score-entropy derivation. 
+
+A consistent lesson is that optimization choices are at least as important as architectural ones in this regime. In particular, exponential weight averaging gives one of the largest improvements on the cumulative search path. This does not invalidate the convolution result: weight averaging is an established, broadly applicable optimization technique, whereas the input convolution is a cheap task-specific architectural bias. The milestone path used masked cross-entropy; the convolution benefit was also observed under score-entropy.
 
 \section{Generated Samples}
 \label{sec:samples}
@@ -339,17 +322,7 @@ which is comparable to frontier models such as Gemini 3.1 Pro Preview.
 
 \section{Conclusion}
 
-In a character-level discrete diffusion setting, one of the
-most effective and most transferable additions was also among the cheapest: a
-small residual stack of depthwise convolutions on the token embeddings before the
-transformer. It reduced validation loss by about the same percentage as changes
-costing many more parameters or much more compute, and it gave the clearest
-improvement in qualitative output, while adding only about 2{,}300 parameters and
-negligible computation, even as heavier techniques such as mixture-of-experts,
-linear attention, and sharpness-aware minimization regressed. We read this as
-evidence that, for character-level diffusion, an explicit local operator
-complements the global mixing of attention in a way that is otherwise hard for a
-small model to learn.
+In this character-level discrete diffusion setting, the clearest architectural result was a small residual stack of depthwise convolutions on the token embeddings. The final input-only stack adds about 2,300 parameters and negligible computation, while improving validation loss and producing the clearest qualitative improvement in local text structure. Optimization mattered at least as much: exponential weight averaging produced a similarly strong gain along the search trajectory and would reasonably form part of a stronger baseline in future work. We therefore view the convolution not as the dominant source of overall improvement, but as evidence that an explicit and inexpensive local operator can complement global attention in small character-level diffusion models.
 
 \section*{Limitations}
 
